@@ -6,7 +6,7 @@ import requests
 
 # --- إعدادات النظام الحقيقية ---
 # تم وضع التوكن الخاص بك هنا
-TELEGRAM_TOKEN = "8691308758:AAEwlVzXLo8EykZtYju6ZBkyzfJdEGhnhsE"
+TELEGRAM_TOKEN = "8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM"
 # ملاحظة: تأكد من الحصول على CHAT_ID الخاص بك ووضعه هنا
 CHAT_ID = "5716145319" 
 ADMIN_PASSWORD = "123"
