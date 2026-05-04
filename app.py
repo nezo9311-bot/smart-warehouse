@@ -6,8 +6,8 @@ import requests
 
 # --- إعدادات النظام ---
 ADMIN_PASSWORD = "123"
-TELEGRAM_TOKEN = "ضع_التوكن_هنا"
-CHAT_ID = "ضع_الآيدي_هنا"
+TELEGRAM_TOKEN = "8691308758:AAEwlVzXLo8EykZtYju6ZBkyzfJdEGhnhsE"
+CHAT_ID = "5716145319"
 
 # --- وظائف قاعدة البيانات ---
 def init_db():
