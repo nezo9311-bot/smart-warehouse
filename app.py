@@ -1,15 +1,17 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 import requests
 
-# --- إعدادات النظام ---
-ADMIN_PASSWORD = "123"
+# --- إعدادات النظام الحقيقية ---
+# تم وضع التوكن الخاص بك هنا
 TELEGRAM_TOKEN = "8691308758:AAEwlVzXLo8EykZtYju6ZBkyzfJdEGhnhsE"
-CHAT_ID = "5716145319"
+# ملاحظة: تأكد من الحصول على CHAT_ID الخاص بك ووضعه هنا
+CHAT_ID = "5716145319" 
+ADMIN_PASSWORD = "123"
 
-# --- وظائف قاعدة البيانات ---
+# --- وظائف النظام الأساسية ---
 def init_db():
     conn = sqlite3.connect('warehouse.db')
     c = conn.cursor()
@@ -26,84 +28,80 @@ def send_telegram(msg):
     try: requests.get(url)
     except: pass
 
-# --- واجهة أمين المخزن ---
-def storekeeper_view():
-    st.header("📲 قسم العمليات الميدانية")
-    
-    action = st.radio("نوع العملية", ["إدخال بضاعة 📥", "إخراج بضاعة 📤"])
-    
-    with st.form("movement_form"):
-        # إكمال تلقائي ذكي للنصف
-        conn = sqlite3.connect('warehouse.db')
-        existing_data = pd.read_sql("SELECT DISTINCT name, brand FROM inventory", conn)
-        conn.close()
-        
-        name = st.selectbox("اسم الصنف", options=list(existing_data['name'].unique()) + ["+ إضافة صنف جديد"], index=None)
-        if name == "+ إضافة صنف جديد":
-            name = st.text_input("اكتب اسم الصنف الجديد")
-            
-        brand = st.text_input("الماركة / النوع")
-        qty = st.number_input("الكمية", min_value=1)
-        dest = ""
-        if "إخراج" in action:
-            dest = st.text_input("الجهة المستلمة")
-            
-        submit = st.form_submit_with_button("تنفيذ وحفظ")
-        
-        if submit:
-            process_data(action, name, brand, qty, dest)
+# --- واجهة المستخدم ---
+def main():
+    st.set_page_config(page_title="مستودع nezo9311", layout="centered")
+    init_db()
 
-def process_data(action, name, brand, qty, dest):
+    page = st.sidebar.selectbox("الانتقال إلى", ["واجهة المخزن", "لوحة الإدارة"])
+
+    if page == "واجهة المخزن":
+        st.header("📲 قسم العمليات الميدانية")
+        action = st.radio("نوع العملية", ["إدخال بضاعة 📥", "إخراج بضاعة 📤"])
+        
+        with st.form("movement_form"):
+            conn = sqlite3.connect('warehouse.db')
+            existing_data = pd.read_sql("SELECT DISTINCT name FROM inventory", conn)
+            conn.close()
+            
+            name = st.selectbox("اسم الصنف", options=["إضافة صنف جديد +"] + list(existing_data['name'].unique()))
+            if name == "إضافة صنف جديد +":
+                name = st.text_input("اكتب اسم الصنف الجديد")
+            
+            brand = st.text_input("الماركة / النوع")
+            qty = st.number_input("الكمية", min_value=1, step=1)
+            dest = ""
+            if "إخراج" in action:
+                dest = st.text_input("الجهة المستلمة")
+            
+            # تم إصلاح الزر هنا ليعمل بشكل صحيح
+            submit = st.form_submit_button("✅ تنفيذ وحفظ البيانات")
+            
+            if submit:
+                if name and brand:
+                    save_data(action, name, brand, qty, dest)
+                else:
+                    st.error("الرجاء إكمال كافة البيانات")
+
+    elif page == "لوحة الإدارة":
+        st.sidebar.title("🔐 الإدارة")
+        pw = st.sidebar.text_input("كلمة السر", type="password")
+        if pw == ADMIN_PASSWORD:
+            show_admin_dashboard()
+
+def save_data(action, name, brand, qty, dest):
     conn = sqlite3.connect('warehouse.db')
     c = conn.cursor()
-    
     if "إدخال" in action:
-        c.execute("INSERT OR REPLACE INTO inventory (name, brand, quantity) VALUES (?, ?, COALESCE((SELECT quantity FROM inventory WHERE name=? AND brand=?), 0) + ?)", 
-                  (name, brand, name, brand, qty))
+        c.execute("INSERT OR REPLACE INTO inventory VALUES (?, ?, COALESCE((SELECT quantity FROM inventory WHERE name=? AND brand=?), 0) + ?)", (name, brand, name, brand, qty))
         c.execute("INSERT INTO movements VALUES ('IN', ?, ?, ?, '', ?)", (name, brand, qty, datetime.now()))
-        send_telegram(f"📥 تم إدخال {qty} {name} ({brand})")
-        st.success("تم الحفظ وتحديث المخزون")
+        send_telegram(f"📥 توريد جديد:\nصنف: {name}\nنوع: {brand}\nكمية: {qty}")
+        st.success("تم التحديث!")
     else:
-        # فحص المخزون قبل الإخراج
         res = c.execute("SELECT quantity FROM inventory WHERE name=? AND brand=?", (name, brand)).fetchone()
         if res and res[0] >= qty:
             c.execute("UPDATE inventory SET quantity = quantity - ? WHERE name=? AND brand=?", (qty, name, brand))
             c.execute("INSERT INTO movements VALUES ('OUT', ?, ?, ?, ?, ?)", (name, brand, qty, dest, datetime.now()))
-            send_telegram(f"📤 تم إخراج {qty} {name} ({brand}) إلى {dest}")
-            st.warning("تم الصرف بنجاح")
+            send_telegram(f"📤 صرف مخزني:\nصنف: {name}\nإلى: {dest}\nكمية: {qty}")
+            st.warning("تم الإخراج!")
         else:
-            st.error("الكمية غير كافية في المخزن!")
-            
+            st.error("الكمية غير كافية!")
     conn.commit()
     conn.close()
 
-# --- واجهة المدير والتحليل ---
-def admin_view():
-    st.sidebar.title("🔐 منطقة الإدارة")
-    pw = st.sidebar.text_input("كلمة السر", type="password")
+def show_admin_dashboard():
+    st.header("📊 تحليلات السوق")
+    conn = sqlite3.connect('warehouse.db')
+    df = pd.read_sql("SELECT * FROM movements", conn)
+    inv = pd.read_sql("SELECT * FROM inventory", conn)
+    conn.close()
     
-    if pw == ADMIN_PASSWORD:
-        st.header("📊 لوحة تحليل السوق والاتجاهات")
-        conn = sqlite3.connect('warehouse.db')
-        df = pd.read_sql("SELECT * FROM movements", conn)
-        
-        if not df.empty:
-            # تحليل الاتجاهات (مقارنة الأسبوع الحالي بالماضي)
-            st.subheader("📈 تحليل حركة الماركات")
-            brand_perf = df[df['type']=='OUT'].groupby(['name', 'brand'])['quantity'].sum().reset_index()
-            st.dataframe(brand_perf)
-            
-            # مؤشر النشاط
-            total_in = df[df['type']=='IN']['quantity'].sum()
-            total_out = df[df['type']=='OUT']['quantity'].sum()
-            idx = (total_out / (total_in + 1)) * 100
-            st.metric("مؤشر نشاط السوق العام", f"{idx:.1f}%")
-        conn.close()
+    st.subheader("📦 المخزون الحالي")
+    st.table(inv)
+    
+    if not df.empty:
+        st.subheader("📈 حركة السحب")
+        st.bar_chart(df[df['type']=='OUT'].groupby('name')['quantity'].sum())
 
-# --- تشغيل التطبيق ---
-init_db()
-page = st.sidebar.selectbox("انتقل إلى", ["واجهة المخزن", "لوحة الإدارة"])
-if page == "واجهة المخزن":
-    storekeeper_view()
-else:
-    admin_view()
+if __name__ == "__main__":
+    main()
