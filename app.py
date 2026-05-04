@@ -36,7 +36,7 @@ def main():
     page = st.sidebar.selectbox("الانتقال إلى", ["واجهة المخزن", "لوحة الإدارة"])
 
     if page == "واجهة المخزن":
-        st.header("📲 قسم العمليات الميدانية")
+        st.header("مخزن 1")
         action = st.radio("نوع العملية", ["إدخال بضاعة 📥", "إخراج بضاعة 📤"])
         
         with st.form("movement_form"):
