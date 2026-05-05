@@ -5,8 +5,8 @@ from datetime import datetime
 import requests
 
 # --- إعدادات ---
-TELEGRAM_TOKEN = "YOUR_TOKEN"
-CHAT_ID = "YOUR_CHAT_ID"
+TELEGRAM_TOKEN = "8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM"
+CHAT_ID = "5716145319"
 
 # --- قاعدة البيانات ---
 def init_db():
