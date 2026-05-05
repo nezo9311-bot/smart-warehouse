@@ -41,7 +41,7 @@ def send_telegram(msg):
     except:
         pass
 
-# --- معالجة العمليات ---
+# --- العمليات ---
 def process_data(action, name, brand, qty, dest):
     conn = sqlite3.connect('warehouse.db')
     c = conn.cursor()
@@ -74,7 +74,6 @@ def process_data(action, name, brand, qty, dest):
             send_telegram(f"📤 تم إخراج {qty} {name} إلى {dest}")
             st.warning("تم الإخراج بنجاح")
 
-            # تنبيه نقص
             if res[0] - qty < 5:
                 send_telegram(f"⚠️ المخزون قرب ينتهي من {name}")
 
@@ -98,8 +97,15 @@ def show_admin():
 
     conn.close()
 
+    # ✅ تغيير أسماء الأعمدة للعربي
+    inv_display = inv.rename(columns={
+        "name": "الصنف",
+        "brand": "الماركة",
+        "quantity": "الكمية"
+    })
+
     st.subheader("📦 المخزون الحالي")
-    st.dataframe(inv, use_container_width=True)
+    st.dataframe(inv_display, use_container_width=True)
 
     st.divider()
 
@@ -109,7 +115,16 @@ def show_admin():
     if filter_type != "الكل":
         movements = movements[movements['type'] == filter_type]
 
-    st.dataframe(movements, use_container_width=True)
+    movements_display = movements.rename(columns={
+        "type": "النوع",
+        "name": "الصنف",
+        "brand": "الماركة",
+        "quantity": "الكمية",
+        "destination": "الجهة",
+        "date": "التاريخ"
+    })
+
+    st.dataframe(movements_display, use_container_width=True)
 
     if not inv.empty:
         st.subheader("📈 إحصائيات")
@@ -117,7 +132,7 @@ def show_admin():
         st.metric("عدد الأصناف", inv.shape[0])
         st.bar_chart(inv.set_index('name')['quantity'])
 
-# --- التطبيق الرئيسي ---
+# --- التطبيق ---
 def main():
     st.set_page_config(page_title="نظام المخازن", layout="wide")
     init_db()
@@ -132,16 +147,23 @@ def main():
     if menu == "إدخال بضاعة 📥":
         st.header("📥 إدخال بضاعة")
 
-        with st.form("in_form"):
-            conn = sqlite3.connect('warehouse.db')
-            data = pd.read_sql("SELECT DISTINCT name FROM inventory", conn)
-            conn.close()
+        conn = sqlite3.connect('warehouse.db')
+        data = pd.read_sql("SELECT * FROM inventory", conn)
+        conn.close()
 
+        with st.form("in_form"):
             name = st.selectbox("اسم الصنف", ["إضافة جديد +"] + list(data['name'].unique()))
+
             if name == "إضافة جديد +":
                 name = st.text_input("اسم الصنف الجديد")
+                brand = st.text_input("الماركة")
+            else:
+                brands = data[data['name'] == name]['brand'].unique()
+                brand = st.selectbox("الماركة", list(brands) + ["إضافة ماركة جديدة +"])
 
-            brand = st.text_input("الماركة")
+                if brand == "إضافة ماركة جديدة +":
+                    brand = st.text_input("أدخل الماركة الجديدة")
+
             qty = st.number_input("الكمية", min_value=1)
 
             if st.form_submit_button("حفظ"):
@@ -151,17 +173,20 @@ def main():
     elif menu == "إخراج بضاعة 📤":
         st.header("📤 إخراج بضاعة")
 
+        conn = sqlite3.connect('warehouse.db')
+        data = pd.read_sql("SELECT * FROM inventory", conn)
+        conn.close()
+
+        if data.empty:
+            st.warning("لا يوجد مخزون")
+            return
+
         with st.form("out_form"):
-            conn = sqlite3.connect('warehouse.db')
-            data = pd.read_sql("SELECT * FROM inventory", conn)
-            conn.close()
-
-            if data.empty:
-                st.warning("لا يوجد مخزون")
-                return
-
             name = st.selectbox("اسم الصنف", data['name'].unique())
-            brand = st.text_input("الماركة")
+
+            filtered = data[data['name'] == name]
+            brand = st.selectbox("الماركة", filtered['brand'].unique())
+
             qty = st.number_input("الكمية", min_value=1)
             dest = st.text_input("الجهة المستلمة")
 
