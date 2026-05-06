@@ -1,19 +1,28 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
-import os
 import requests
 
 st.set_page_config(page_title="نظام إدارة المخازن", layout="wide")
+
+# =========================
+# Google Sheets اتصال
+# =========================
+scope = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
+
+creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
+client = gspread.authorize(creds)
 
 # =========================
 # Telegram
 # =========================
 TELEGRAM_TOKEN = "8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM"
 CHAT_ID = "5716145319"
-
-LOW_STOCK = 5  # حد التنبيه
 
 def send_telegram(msg):
     try:
@@ -23,138 +32,90 @@ def send_telegram(msg):
         pass
 
 # =========================
-# قاعدة البيانات
+# أدوات Google Sheets
 # =========================
-DIR = "warehouses"
-os.makedirs(DIR, exist_ok=True)
+def open_sheet(name):
+    try:
+        return client.open(name)
+    except:
+        return client.create(name)
 
-def db_path(name):
-    return f"{DIR}/{name}.db"
+def get_ws(sheet, name):
+    try:
+        return sheet.worksheet(name)
+    except:
+        return sheet.add_worksheet(title=name, rows=1000, cols=10)
 
-def create_db(name):
-    conn = sqlite3.connect(db_path(name))
-    c = conn.cursor()
+def load_df(sheet, ws_name, cols):
+    ws = get_ws(sheet, ws_name)
+    data = ws.get_all_records()
+    return pd.DataFrame(data) if data else pd.DataFrame(columns=cols)
 
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS inventory (
-        name TEXT,
-        brand TEXT,
-        quantity INTEGER,
-        PRIMARY KEY(name, brand)
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS movements (
-        type TEXT,
-        name TEXT,
-        brand TEXT,
-        quantity INTEGER,
-        destination TEXT,
-        date TEXT
-    )
-    """)
-
-    conn.commit()
-    conn.close()
-
-def get_warehouses():
-    return [f.replace(".db","") for f in os.listdir(DIR) if f.endswith(".db")]
+def save_df(sheet, ws_name, df):
+    ws = get_ws(sheet, ws_name)
+    ws.clear()
+    ws.update([df.columns.values.tolist()] + df.values.tolist())
 
 # =========================
-# العمليات
+# اختيار المخزن
 # =========================
-def add_item(db, name, brand, qty):
-    conn = sqlite3.connect(db)
-    c = conn.cursor()
+st.sidebar.title("المخازن")
 
-    res = c.execute("SELECT quantity FROM inventory WHERE name=? AND brand=?",(name,brand)).fetchone()
+warehouse_name = st.sidebar.text_input("اسم المخزن")
+if st.sidebar.button("فتح / إنشاء"):
+    st.session_state.warehouse = warehouse_name
 
-    if res:
-        c.execute("UPDATE inventory SET quantity=quantity+? WHERE name=? AND brand=?",(qty,name,brand))
-    else:
-        c.execute("INSERT INTO inventory VALUES(?,?,?)",(name,brand,qty))
-
-    c.execute("INSERT INTO movements VALUES(?,?,?,?,?,?)",
-              ("إدخال",name,brand,qty,"",str(datetime.now())))
-
-    conn.commit()
-    conn.close()
-
-    send_telegram(f"تم إدخال {qty} من {name} - {brand}")
-
-def remove_item(db,name,brand,qty,dest):
-    conn = sqlite3.connect(db)
-    c = conn.cursor()
-
-    res = c.execute("SELECT quantity FROM inventory WHERE name=? AND brand=?",(name,brand)).fetchone()
-
-    if not res or res[0] < qty:
-        conn.close()
-        return False
-
-    new_qty = res[0] - qty
-
-    c.execute("UPDATE inventory SET quantity=quantity-? WHERE name=? AND brand=?",(qty,name,brand))
-    c.execute("INSERT INTO movements VALUES(?,?,?,?,?,?)",
-              ("إخراج",name,brand,qty,dest,str(datetime.now())))
-
-    conn.commit()
-    conn.close()
-
-    send_telegram(f"تم إخراج {qty} من {name} - {brand} إلى {dest}")
-
-    if new_qty <= LOW_STOCK:
-        send_telegram(f"تنبيه: المخزون منخفض ({name} - {brand}) المتبقي {new_qty}")
-
-    return True
-
-# =========================
-# الواجهة
-# =========================
-st.title("نظام إدارة المخازن")
-
-warehouses = get_warehouses()
-
-new_wh = st.sidebar.text_input("مخزن جديد")
-if st.sidebar.button("إنشاء"):
-    if new_wh:
-        create_db(new_wh)
-        st.rerun()
-
-if not warehouses:
-    st.warning("لا يوجد مخازن")
+if "warehouse" not in st.session_state:
     st.stop()
 
-selected = st.sidebar.selectbox("اختر المخزن",warehouses)
-db = db_path(selected)
+sheet = open_sheet(st.session_state.warehouse)
 
-tab1,tab2,tab3,tab4 = st.tabs(["إدخال","إخراج","المخزون","الإدارة"])
+# =========================
+# تحميل البيانات
+# =========================
+inv = load_df(sheet, "inventory", ["name","brand","quantity"])
+mov = load_df(sheet, "movements", ["type","name","brand","quantity","dest","date"])
 
-# ================= إدخال =================
+# =========================
+# Tabs
+# =========================
+tab1, tab2, tab3, tab4 = st.tabs(["إدخال", "إخراج", "المخزون", "الإدارة"])
+
+# =========================
+# إدخال
+# =========================
 with tab1:
     st.subheader("إدخال بضاعة")
 
     with st.form("add"):
         name = st.text_input("الصنف")
         brand = st.text_input("الماركة")
-        qty = st.number_input("الكمية",1)
+        qty = st.number_input("الكمية", 1)
 
         if st.form_submit_button("حفظ"):
-            add_item(db,name,brand,qty)
+            if ((inv["name"] == name) & (inv["brand"] == brand)).any():
+                inv.loc[(inv["name"]==name)&(inv["brand"]==brand),"quantity"] += qty
+            else:
+                inv.loc[len(inv)] = [name,brand,qty]
+
+            mov.loc[len(mov)] = ["إدخال",name,brand,qty,"",str(datetime.now())]
+
+            save_df(sheet,"inventory",inv)
+            save_df(sheet,"movements",mov)
+
+            send_telegram(f"إدخال: {name}-{brand}-{qty}")
+
             st.success("تم الإدخال")
 
-# ================= إخراج =================
+# =========================
+# إخراج
+# =========================
 with tab2:
     st.subheader("إخراج بضاعة")
 
-    conn = sqlite3.connect(db)
-    df = pd.read_sql("SELECT * FROM inventory",conn)
-    conn.close()
-
-    if not df.empty:
-        name = st.selectbox("الصنف",df["name"].unique())
-        filtered = df[df["name"]==name]
+    if not inv.empty:
+        name = st.selectbox("الصنف",inv["name"].unique())
+        filtered = inv[inv["name"]==name]
 
         brand = st.selectbox("الماركة",filtered["brand"])
         available = int(filtered[filtered["brand"]==brand]["quantity"].values[0])
@@ -165,65 +126,59 @@ with tab2:
         dest = st.text_input("الجهة")
 
         if st.button("تنفيذ"):
-            if remove_item(db,name,brand,qty,dest):
+            if available >= qty:
+                inv.loc[(inv["name"]==name)&(inv["brand"]==brand),"quantity"] -= qty
+
+                mov.loc[len(mov)] = ["إخراج",name,brand,qty,dest,str(datetime.now())]
+
+                save_df(sheet,"inventory",inv)
+                save_df(sheet,"movements",mov)
+
+                send_telegram(f"إخراج: {name}-{brand}-{qty}")
+
                 st.success("تم الإخراج")
             else:
                 st.error("الكمية غير كافية")
 
-# ================= المخزون =================
+# =========================
+# المخزون
+# =========================
 with tab3:
-    st.subheader("المخزون")
+    st.subheader("المخزون الحالي")
+    st.dataframe(inv)
 
-    conn = sqlite3.connect(db)
+    st.subheader("سجل العمليات")
+    st.dataframe(mov.sort_values("date",ascending=False))
 
-    inv = pd.read_sql("""
-    SELECT name AS الصنف, brand AS الماركة, quantity AS الكمية FROM inventory
-    """,conn)
-
-    mov = pd.read_sql("""
-    SELECT type AS النوع, name AS الصنف, brand AS الماركة,
-           quantity AS الكمية, destination AS الجهة, date AS التاريخ
-    FROM movements ORDER BY date DESC
-    """,conn)
-
-    conn.close()
-
-    st.dataframe(inv,use_container_width=True)
-    st.dataframe(mov,use_container_width=True)
-
-# ================= الإدارة =================
+# =========================
+# الإدارة
+# =========================
 with tab4:
-    st.subheader("لوحة الإدارة")
+    st.subheader("إدارة المخزن")
 
-    wh = st.selectbox("اختر مخزن",warehouses)
-    db_admin = db_path(wh)
-
-    conn = sqlite3.connect(db_admin)
-    inv = pd.read_sql("SELECT * FROM inventory",conn)
-    conn.close()
+    st.write("حذف صنف")
 
     for i,row in inv.iterrows():
-        col1,col2,col3,col4 = st.columns(4)
+        c1,c2,c3,c4 = st.columns(4)
+        c1.write(row["name"])
+        c2.write(row["brand"])
+        c3.write(row["quantity"])
 
-        col1.write(row["name"])
-        col2.write(row["brand"])
-        col3.write(row["quantity"])
-
-        if col4.button("حذف",key=f"d{i}"):
-            conn = sqlite3.connect(db_admin)
-            c = conn.cursor()
-            c.execute("DELETE FROM inventory WHERE name=? AND brand=?",(row["name"],row["brand"]))
-            conn.commit()
-            conn.close()
+        if c4.button("حذف",key=i):
+            inv = inv.drop(i)
+            save_df(sheet,"inventory",inv)
             st.rerun()
 
     st.divider()
 
-    name = st.text_input("الصنف",key="a1")
-    brand = st.text_input("الماركة",key="a2")
-    qty = st.number_input("الكمية",0,key="a3")
+    st.write("إضافة مباشرة")
+
+    n = st.text_input("الصنف",key="n1")
+    b = st.text_input("الماركة",key="n2")
+    q = st.number_input("الكمية",0,key="n3")
 
     if st.button("حفظ"):
-        add_item(db_admin,name,brand,qty)
-        st.success("تم التحديث")
+        inv.loc[len(inv)] = [n,b,q]
+        save_df(sheet,"inventory",inv)
+        st.success("تم")
         st.rerun()
