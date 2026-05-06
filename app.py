@@ -6,26 +6,17 @@ import os
 import requests
 
 # =========================
-# Telegram Settings
+# إعداد الصفحة (مهم جداً)
 # =========================
-TELEGRAM_TOKEN = os.getenv("8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM")
-CHAT_ID = os.getenv("5716145319")
-
-def send_telegram(message):
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        return
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": message})
-    except:
-        pass
-
+st.set_page_config(
+    page_title="نظام إدارة المخازن",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # =========================
-# Arabic UI (RTL)
+# فرض العربية + RTL
 # =========================
-st.set_page_config(page_title="نظام إدارة المخازن", layout="wide")
-
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600&display=swap');
@@ -35,23 +26,43 @@ html, body, [class*="css"] {
     text-align: right;
     font-family: 'Cairo', sans-serif;
 }
+
+/* إخفاء أي نص إنجليزي افتراضي */
+footer {visibility: hidden;}
+header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
 
 # =========================
-# Warehouses
+# إعداد تليجرام
 # =========================
-WAREHOUSE_DIR = "warehouses"
+TELEGRAM_TOKEN = os.getenv("8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM")
+CHAT_ID = os.getenv("5716145319")
 
-if not os.path.exists(WAREHOUSE_DIR):
-    os.makedirs(WAREHOUSE_DIR)
+def send_telegram(text):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": CHAT_ID, "text": text})
+    except:
+        pass
+
+
+# =========================
+# قاعدة البيانات
+# =========================
+DIR = "warehouses"
+
+if not os.path.exists(DIR):
+    os.makedirs(DIR)
 
 def قائمة_المخازن():
-    return [f.replace(".db", "") for f in os.listdir(WAREHOUSE_DIR) if f.endswith(".db")]
+    return [f.replace(".db", "") for f in os.listdir(DIR) if f.endswith(".db")]
 
 def إنشاء_مخزن(name):
-    conn = sqlite3.connect(f"{WAREHOUSE_DIR}/{name}.db")
+    conn = sqlite3.connect(f"{DIR}/{name}.db")
     c = conn.cursor()
 
     c.execute("""
@@ -78,13 +89,13 @@ def إنشاء_مخزن(name):
     conn.close()
 
 def db(name):
-    return f"{WAREHOUSE_DIR}/{name}.db"
+    return f"{DIR}/{name}.db"
 
 
 # =========================
-# Operations
+# العمليات
 # =========================
-def إضافة(db_path, الصنف, الماركة, الكمية):
+def إدخال(db_path, الصنف, الماركة, الكمية):
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
 
@@ -126,7 +137,7 @@ def إخراج(db_path, الصنف, الماركة, الكمية, الجهة):
 
     if not موجود or موجود[0] < الكمية:
         conn.close()
-        return False, 0
+        return False
 
     المتبقي = موجود[0] - الكمية
 
@@ -148,47 +159,44 @@ def إخراج(db_path, الصنف, الماركة, الكمية, الجهة):
     )
 
     if المتبقي <= 5:
-        send_telegram(
-            f"تنبيه: مخزون منخفض\nالصنف: {الصنف}\nالماركة: {الماركة}\nالمتبقي: {المتبقي}"
-        )
+        send_telegram(f"تنبيه مخزون منخفض\nالصنف: {الصنف}\nالمتبقي: {المتبقي}")
 
-    return True, المتبقي
+    return True
 
 
 # =========================
-# UI
+# الواجهة العربية الكاملة
 # =========================
 def التطبيق():
 
     st.title("نظام إدارة المخازن")
 
-    # ===== إدارة المخازن =====
-    st.sidebar.header("المخازن")
+    st.sidebar.title("إدارة المخازن")
 
     المخازن = قائمة_المخازن()
 
-    جديد = st.sidebar.text_input("إنشاء مخزن جديد")
-    if st.sidebar.button("إنشاء"):
-        if جديد:
-            إنشاء_مخزن(جديد)
+    اسم_جديد = st.sidebar.text_input("إنشاء مخزن جديد")
+    if st.sidebar.button("إنشاء مخزن"):
+        if اسم_جديد:
+            إنشاء_مخزن(اسم_جديد)
             st.rerun()
 
     if not المخازن:
-        st.warning("لا توجد مخازن. قم بإنشاء مخزن أولاً.")
+        st.warning("لا يوجد مخازن حالياً")
         return
 
     المخزن = st.sidebar.selectbox("اختيار المخزن", المخازن)
     db_path = db(المخزن)
 
-    تبويب1, تبويب2, تبويب3 = st.tabs([
-        "إضافة بضاعة",
+    tab1, tab2, tab3 = st.tabs([
+        "إدخال بضاعة",
         "إخراج بضاعة",
-        "سجل المخزون"
+        "سجل العمليات"
     ])
 
-    # ================= إضافة =================
-    with تبويب1:
-        st.subheader("إضافة بضاعة")
+    # ================= إدخال =================
+    with tab1:
+        st.subheader("إدخال بضاعة")
 
         conn = sqlite3.connect(db_path)
         data = pd.read_sql("SELECT * FROM inventory", conn)
@@ -198,7 +206,7 @@ def التطبيق():
 
         if الصنف == "صنف جديد":
             الصنف = st.text_input("اسم الصنف")
-            الماركة = st.text_input("الماركة")
+            الماركة = st.text_input("اسم الماركة")
         else:
             ماركات = data[data["name"] == الصنف]["brand"].unique()
             الماركة = st.selectbox("الماركة", list(ماركات) if len(ماركات) > 0 else ["ماركة جديدة"])
@@ -208,12 +216,12 @@ def التطبيق():
 
         الكمية = st.number_input("الكمية", min_value=1)
 
-        if st.button("حفظ"):
-            إضافة(db_path, الصنف, الماركة, الكمية)
-            st.success("تم الحفظ بنجاح")
+        if st.button("حفظ الإدخال"):
+            إدخال(db_path, الصنف, الماركة, الكمية)
+            st.success("تم حفظ البيانات")
 
     # ================= إخراج =================
-    with تبويب2:
+    with tab2:
         st.subheader("إخراج بضاعة")
 
         conn = sqlite3.connect(db_path)
@@ -240,18 +248,18 @@ def التطبيق():
             st.write("الكمية المتوفرة:", المتوفر)
 
             الكمية = st.number_input("الكمية", min_value=1, max_value=int(المتوفر))
-            الجهة = st.text_input("الجهة")
+            الجهة = st.text_input("الجهة المستلمة")
 
-            if st.button("تنفيذ"):
-                ok, remaining = إخراج(db_path, الصنف, الماركة, الكمية, الجهة)
+            if st.button("تنفيذ الإخراج"):
+                ok = إخراج(db_path, الصنف, الماركة, الكمية, الجهة)
 
                 if ok:
-                    st.success("تم الإخراج بنجاح")
+                    st.success("تم تنفيذ الإخراج")
                 else:
                     st.error("الكمية غير كافية")
 
     # ================= السجل =================
-    with تبويب3:
+    with tab3:
         st.subheader("سجل العمليات")
 
         conn = sqlite3.connect(db_path)
@@ -260,10 +268,10 @@ def التطبيق():
         conn.close()
 
         st.write("المخزون الحالي")
-        st.dataframe(inv, use_container_width=True)
+        st.dataframe(inv)
 
         st.write("سجل الحركة")
-        st.dataframe(mov, use_container_width=True)
+        st.dataframe(mov)
 
 
 if __name__ == "__main__":
