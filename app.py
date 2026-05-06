@@ -6,16 +6,12 @@ import os
 import requests
 
 # =========================
-# إعداد الصفحة (مهم جداً)
+# MUST be first Streamlit command
 # =========================
-st.set_page_config(
-    page_title="نظام إدارة المخازن",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="نظام المخازن", layout="wide")
 
 # =========================
-# فرض العربية + RTL
+# Arabic UI
 # =========================
 st.markdown("""
 <style>
@@ -26,43 +22,35 @@ html, body, [class*="css"] {
     text-align: right;
     font-family: 'Cairo', sans-serif;
 }
-
-/* إخفاء أي نص إنجليزي افتراضي */
-footer {visibility: hidden;}
-header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-
 # =========================
-# إعداد تليجرام
+# Telegram
 # =========================
 TELEGRAM_TOKEN = os.getenv("8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM")
 CHAT_ID = os.getenv("5716145319")
 
-def send_telegram(text):
+def send_telegram(msg):
     if not TELEGRAM_TOKEN or not CHAT_ID:
         return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": text})
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
     except:
         pass
 
-
 # =========================
-# قاعدة البيانات
+# Database
 # =========================
 DIR = "warehouses"
+os.makedirs(DIR, exist_ok=True)
 
-if not os.path.exists(DIR):
-    os.makedirs(DIR)
+def db_path(name):
+    return f"{DIR}/{name}.db"
 
-def قائمة_المخازن():
-    return [f.replace(".db", "") for f in os.listdir(DIR) if f.endswith(".db")]
-
-def إنشاء_مخزن(name):
-    conn = sqlite3.connect(f"{DIR}/{name}.db")
+def create_db(name):
+    conn = sqlite3.connect(db_path(name))
     c = conn.cursor()
 
     c.execute("""
@@ -81,198 +69,179 @@ def إنشاء_مخزن(name):
         brand TEXT,
         quantity INTEGER,
         destination TEXT,
-        date TIMESTAMP
+        date TEXT
     )
     """)
 
     conn.commit()
     conn.close()
 
-def db(name):
-    return f"{DIR}/{name}.db"
-
+def get_warehouses():
+    return [f.replace(".db", "") for f in os.listdir(DIR) if f.endswith(".db")]
 
 # =========================
-# العمليات
+# Operations
 # =========================
-def إدخال(db_path, الصنف, الماركة, الكمية):
-    conn = sqlite3.connect(db_path)
+def add_item(db, name, brand, qty):
+    conn = sqlite3.connect(db)
     c = conn.cursor()
 
-    موجود = c.execute(
+    res = c.execute(
         "SELECT quantity FROM inventory WHERE name=? AND brand=?",
-        (الصنف, الماركة)
+        (name, brand)
     ).fetchone()
 
-    if موجود:
+    if res:
         c.execute(
             "UPDATE inventory SET quantity = quantity + ? WHERE name=? AND brand=?",
-            (الكمية, الصنف, الماركة)
+            (qty, name, brand)
         )
     else:
         c.execute(
             "INSERT INTO inventory VALUES (?, ?, ?)",
-            (الصنف, الماركة, الكمية)
+            (name, brand, qty)
         )
 
     c.execute(
         "INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)",
-        ("إدخال", الصنف, الماركة, الكمية, "", datetime.now())
+        ("IN", name, brand, qty, "", str(datetime.now()))
     )
 
     conn.commit()
     conn.close()
 
-    send_telegram(f"تم إدخال بضاعة\nالصنف: {الصنف}\nالماركة: {الماركة}\nالكمية: {الكمية}")
+    send_telegram(f"إدخال: {name} - {brand} - {qty}")
 
 
-def إخراج(db_path, الصنف, الماركة, الكمية, الجهة):
-    conn = sqlite3.connect(db_path)
+def remove_item(db, name, brand, qty, dest):
+    conn = sqlite3.connect(db)
     c = conn.cursor()
 
-    موجود = c.execute(
+    res = c.execute(
         "SELECT quantity FROM inventory WHERE name=? AND brand=?",
-        (الصنف, الماركة)
+        (name, brand)
     ).fetchone()
 
-    if not موجود or موجود[0] < الكمية:
+    if not res:
         conn.close()
         return False
 
-    المتبقي = موجود[0] - الكمية
+    if res[0] < qty:
+        conn.close()
+        return False
+
+    new_qty = res[0] - qty
 
     c.execute(
         "UPDATE inventory SET quantity = quantity - ? WHERE name=? AND brand=?",
-        (الكمية, الصنف, الماركة)
+        (qty, name, brand)
     )
 
     c.execute(
         "INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)",
-        ("إخراج", الصنف, الماركة, الكمية, الجهة, datetime.now())
+        ("OUT", name, brand, qty, dest, str(datetime.now()))
     )
 
     conn.commit()
     conn.close()
 
-    send_telegram(
-        f"تم إخراج بضاعة\nالصنف: {الصنف}\nالماركة: {الماركة}\nالكمية: {الكمية}\nالجهة: {الجهة}"
-    )
-
-    if المتبقي <= 5:
-        send_telegram(f"تنبيه مخزون منخفض\nالصنف: {الصنف}\nالمتبقي: {المتبقي}")
+    send_telegram(f"إخراج: {name} - {brand} - {qty} إلى {dest}")
 
     return True
 
-
 # =========================
-# الواجهة العربية الكاملة
+# App
 # =========================
-def التطبيق():
+st.title("نظام إدارة المخازن")
 
-    st.title("نظام إدارة المخازن")
+warehouses = get_warehouses()
 
-    st.sidebar.title("إدارة المخازن")
+new_wh = st.sidebar.text_input("مخزن جديد")
+if st.sidebar.button("إنشاء"):
+    if new_wh:
+        create_db(new_wh)
+        st.rerun()
 
-    المخازن = قائمة_المخازن()
+if not warehouses:
+    st.warning("لا يوجد مخازن")
+    st.stop()
 
-    اسم_جديد = st.sidebar.text_input("إنشاء مخزن جديد")
-    if st.sidebar.button("إنشاء مخزن"):
-        if اسم_جديد:
-            إنشاء_مخزن(اسم_جديد)
-            st.rerun()
+wh = st.sidebar.selectbox("اختيار المخزن", warehouses)
+db = db_path(wh)
 
-    if not المخازن:
-        st.warning("لا يوجد مخازن حالياً")
-        return
+tab1, tab2, tab3 = st.tabs(["إدخال", "إخراج", "المخزون"])
 
-    المخزن = st.sidebar.selectbox("اختيار المخزن", المخازن)
-    db_path = db(المخزن)
+# ================= إدخال =================
+with tab1:
+    st.subheader("إدخال بضاعة")
 
-    tab1, tab2, tab3 = st.tabs([
-        "إدخال بضاعة",
-        "إخراج بضاعة",
-        "سجل العمليات"
-    ])
+    conn = sqlite3.connect(db)
+    data = pd.read_sql("SELECT * FROM inventory", conn)
+    conn.close()
 
-    # ================= إدخال =================
-    with tab1:
-        st.subheader("إدخال بضاعة")
+    if data.empty:
+        data = pd.DataFrame(columns=["name", "brand", "quantity"])
 
-        conn = sqlite3.connect(db_path)
-        data = pd.read_sql("SELECT * FROM inventory", conn)
-        conn.close()
+    name = st.selectbox("الصنف", ["جديد"] + list(data["name"].unique()))
 
-        الصنف = st.selectbox("الصنف", ["صنف جديد"] + list(data["name"].unique()))
-
-        if الصنف == "صنف جديد":
-            الصنف = st.text_input("اسم الصنف")
-            الماركة = st.text_input("اسم الماركة")
+    if name == "جديد":
+        name = st.text_input("اسم الصنف")
+        brand = st.text_input("الماركة")
+    else:
+        brands = data[data["name"] == name]["brand"].unique().tolist()
+        if len(brands) == 0:
+            brand = st.text_input("الماركة")
         else:
-            ماركات = data[data["name"] == الصنف]["brand"].unique()
-            الماركة = st.selectbox("الماركة", list(ماركات) if len(ماركات) > 0 else ["ماركة جديدة"])
+            brand = st.selectbox("الماركة", brands)
 
-            if الماركة == "ماركة جديدة":
-                الماركة = st.text_input("اسم الماركة")
+    qty = st.number_input("الكمية", min_value=1)
 
-        الكمية = st.number_input("الكمية", min_value=1)
+    if st.button("حفظ"):
+        add_item(db, name, brand, qty)
+        st.success("تم الإدخال")
 
-        if st.button("حفظ الإدخال"):
-            إدخال(db_path, الصنف, الماركة, الكمية)
-            st.success("تم حفظ البيانات")
+# ================= إخراج =================
+with tab2:
+    st.subheader("إخراج بضاعة")
 
-    # ================= إخراج =================
-    with tab2:
-        st.subheader("إخراج بضاعة")
+    conn = sqlite3.connect(db)
+    data = pd.read_sql("SELECT * FROM inventory", conn)
+    conn.close()
 
-        conn = sqlite3.connect(db_path)
-        data = pd.read_sql("SELECT * FROM inventory", conn)
-        conn.close()
+    if data.empty:
+        st.info("لا يوجد مخزون")
+    else:
+        name = st.selectbox("الصنف", data["name"].unique())
+        filtered = data[data["name"] == name]
 
-        if data.empty:
-            st.info("لا يوجد مخزون")
-        else:
+        options = [
+            f"{r['brand']} ({r['quantity']})"
+            for _, r in filtered.iterrows()
+        ]
 
-            الصنف = st.selectbox("الصنف", data["name"].unique())
-            filtered = data[data["name"] == الصنف]
+        selected = st.selectbox("الماركة", options)
+        brand = selected.split(" (")[0]
 
-            خيارات = [
-                f"{r['brand']} (المتوفر: {r['quantity']})"
-                for _, r in filtered.iterrows()
-            ]
+        available = filtered[filtered["brand"] == brand]["quantity"].values[0]
 
-            اختيار = st.selectbox("الماركة", خيارات)
-            الماركة = اختيار.split(" (")[0]
+        qty = st.number_input("الكمية", 1, int(available))
+        dest = st.text_input("الجهة")
 
-            المتوفر = filtered[filtered["brand"] == الماركة]["quantity"].values[0]
+        if st.button("تنفيذ"):
+            ok = remove_item(db, name, brand, qty, dest)
+            if ok:
+                st.success("تم الإخراج")
+            else:
+                st.error("الكمية غير كافية")
 
-            st.write("الكمية المتوفرة:", المتوفر)
+# ================= مخزون =================
+with tab3:
+    st.subheader("المخزون")
 
-            الكمية = st.number_input("الكمية", min_value=1, max_value=int(المتوفر))
-            الجهة = st.text_input("الجهة المستلمة")
+    conn = sqlite3.connect(db)
+    inv = pd.read_sql("SELECT * FROM inventory", conn)
+    mov = pd.read_sql("SELECT * FROM movements ORDER BY date DESC", conn)
+    conn.close()
 
-            if st.button("تنفيذ الإخراج"):
-                ok = إخراج(db_path, الصنف, الماركة, الكمية, الجهة)
-
-                if ok:
-                    st.success("تم تنفيذ الإخراج")
-                else:
-                    st.error("الكمية غير كافية")
-
-    # ================= السجل =================
-    with tab3:
-        st.subheader("سجل العمليات")
-
-        conn = sqlite3.connect(db_path)
-        inv = pd.read_sql("SELECT * FROM inventory", conn)
-        mov = pd.read_sql("SELECT * FROM movements ORDER BY date DESC", conn)
-        conn.close()
-
-        st.write("المخزون الحالي")
-        st.dataframe(inv)
-
-        st.write("سجل الحركة")
-        st.dataframe(mov)
-
-
-if __name__ == "__main__":
-    التطبيق()
+    st.dataframe(inv)
+    st.dataframe(mov)
