@@ -42,8 +42,8 @@ input, textarea {
 # =========================
 # تليجرام
 # =========================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+TELEGRAM_TOKEN = os.getenv("8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM")
+CHAT_ID = os.getenv("5716145319")
 
 def send_telegram(msg):
     if not TELEGRAM_TOKEN or not CHAT_ID:
