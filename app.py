@@ -5,8 +5,8 @@ from datetime import datetime
 import requests
 
 # --- إعدادات ---
-TELEGRAM_TOKEN = "8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM"
-CHAT_ID = "5716145319"
+TELEGRAM_TOKEN = "YOUR_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
 
 # --- قاعدة البيانات ---
 def init_db():
@@ -73,12 +73,21 @@ def process_data(action, name, brand, qty, dest):
     c = conn.cursor()
 
     if action == "إدخال":
-        c.execute("""
-        INSERT OR REPLACE INTO inventory 
-        VALUES (?, ?, COALESCE(
-            (SELECT quantity FROM inventory WHERE name=? AND brand=?), 0
-        ) + ?)
-        """, (name, brand, name, brand, qty))
+        res = c.execute(
+            "SELECT quantity FROM inventory WHERE name=? AND brand=?",
+            (name, brand)
+        ).fetchone()
+
+        if res:
+            c.execute(
+                "UPDATE inventory SET quantity = quantity + ? WHERE name=? AND brand=?",
+                (qty, name, brand)
+            )
+        else:
+            c.execute(
+                "INSERT INTO inventory (name, brand, quantity) VALUES (?, ?, ?)",
+                (name, brand, qty)
+            )
 
         c.execute("INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)",
                   ("إدخال", name, brand, qty, "", datetime.now()))
@@ -87,21 +96,25 @@ def process_data(action, name, brand, qty, dest):
         st.success("تم الإدخال بنجاح")
 
     elif action == "إخراج":
-        res = c.execute("SELECT quantity FROM inventory WHERE name=? AND brand=?",
-                        (name, brand)).fetchone()
+        res = c.execute(
+            "SELECT quantity FROM inventory WHERE name=? AND brand=?",
+            (name, brand)
+        ).fetchone()
 
         if res and res[0] >= qty:
-            c.execute("UPDATE inventory SET quantity = quantity - ? WHERE name=? AND brand=?",
-                      (qty, name, brand))
+            c.execute(
+                "UPDATE inventory SET quantity = quantity - ? WHERE name=? AND brand=?",
+                (qty, name, brand)
+            )
 
             c.execute("INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)",
                       ("إخراج", name, brand, qty, dest, datetime.now()))
 
-            send_telegram(f"📤 تم إخراج {qty} {name} إلى {dest}")
-            st.warning("تم الإخراج بنجاح")
+            send_telegram(f"📤 تم إخراج {qty} {name} ({brand}) إلى {dest}")
+            st.success("تم الإخراج بنجاح")
 
             if res[0] - qty < 5:
-                send_telegram(f"⚠️ المخزون قرب ينتهي من {name}")
+                send_telegram(f"⚠️ المخزون قرب ينتهي من {name} ({brand})")
 
         else:
             st.error("الكمية غير كافية!")
@@ -114,10 +127,8 @@ def show_admin():
     st.header("📊 لوحة الإدارة")
 
     conn = sqlite3.connect('warehouse.db')
-
     inv = pd.read_sql("SELECT * FROM inventory", conn)
     movements = pd.read_sql("SELECT * FROM movements ORDER BY date DESC", conn)
-
     conn.close()
 
     # عرض بالعربي
@@ -208,10 +219,22 @@ def main():
         name = st.selectbox("اسم الصنف", data['name'].unique())
 
         filtered = data[data['name'] == name]
-        brand = st.selectbox("الماركة", filtered['brand'].unique(), key=name)
+
+        brand_options = [
+            f"{row['brand']} (المتبقي: {row['quantity']})"
+            for _, row in filtered.iterrows()
+        ]
+
+        selected = st.selectbox("اختر الماركة", brand_options)
+
+        brand = selected.split(" (")[0]
+
+        current_qty = filtered[filtered['brand'] == brand]['quantity'].values[0]
+
+        st.info(f"📦 المتوفر حالياً: {current_qty}")
 
         with st.form("out_form"):
-            qty = st.number_input("الكمية", min_value=1)
+            qty = st.number_input("الكمية", min_value=1, max_value=int(current_qty))
             dest = st.text_input("الجهة المستلمة")
 
             if st.form_submit_button("صرف"):
@@ -220,7 +243,6 @@ def main():
     # 📊 الإدارة
     elif menu == "الإدارة 📊":
         show_admin()
-
 
 if __name__ == "__main__":
     main()
