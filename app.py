@@ -5,8 +5,8 @@ from datetime import datetime
 import requests
 
 # --- إعدادات ---
-TELEGRAM_TOKEN = "8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM"
-CHAT_ID = "5716145319"
+TELEGRAM_TOKEN = "YOUR_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
 
 # --- قاعدة البيانات ---
 def init_db():
@@ -24,15 +24,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- سعر الدولار ---
-def get_exchange_rate():
-    try:
-        url = "https://api.exchangerate-api.com/v4/latest/USD"
-        data = requests.get(url).json()
-        return data['rates']['SDG']
-    except:
-        return "غير متوفر"
-
 # --- تليجرام ---
 def send_telegram(msg):
     try:
@@ -40,6 +31,41 @@ def send_telegram(msg):
         requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
     except:
         pass
+
+# --- تقرير يومي ---
+def send_daily_report():
+    conn = sqlite3.connect('warehouse.db')
+
+    today = datetime.now().date()
+
+    query = """
+    SELECT name, brand, quantity, destination, date
+    FROM movements
+    WHERE type='إخراج' AND DATE(date)=?
+    ORDER BY date DESC
+    """
+
+    df = pd.read_sql(query, conn, params=(today,))
+    conn.close()
+
+    if df.empty:
+        send_telegram("📊 تقرير اليوم:\nلا توجد عمليات سحب اليوم")
+        return
+
+    total = df['quantity'].sum()
+
+    msg = "📊 تقرير السحب اليومي:\n\n"
+
+    for _, row in df.iterrows():
+        msg += f"📤 {row['name']} ({row['brand']})\n"
+        msg += f"الكمية: {row['quantity']}\n"
+        msg += f"الجهة: {row['destination']}\n"
+        msg += f"الوقت: {row['date']}\n"
+        msg += "------------------\n"
+
+    msg += f"\n🔢 إجمالي المسحوب: {total}"
+
+    send_telegram(msg)
 
 # --- العمليات ---
 def process_data(action, name, brand, qty, dest):
@@ -87,9 +113,6 @@ def process_data(action, name, brand, qty, dest):
 def show_admin():
     st.header("📊 لوحة الإدارة")
 
-    rate = get_exchange_rate()
-    st.metric("سعر الدولار", f"{rate} SDG")
-
     conn = sqlite3.connect('warehouse.db')
 
     inv = pd.read_sql("SELECT * FROM inventory", conn)
@@ -97,7 +120,7 @@ def show_admin():
 
     conn.close()
 
-    # ✅ تغيير أسماء الأعمدة للعربي
+    # عرض بالعربي
     inv_display = inv.rename(columns={
         "name": "الصنف",
         "brand": "الماركة",
@@ -110,6 +133,7 @@ def show_admin():
     st.divider()
 
     st.subheader("📜 سجل الحركات")
+
     filter_type = st.selectbox("فلترة", ["الكل", "إدخال", "إخراج"])
 
     if filter_type != "الكل":
@@ -126,11 +150,11 @@ def show_admin():
 
     st.dataframe(movements_display, use_container_width=True)
 
-    if not inv.empty:
-        st.subheader("📈 إحصائيات")
-        st.metric("إجمالي الكميات", int(inv['quantity'].sum()))
-        st.metric("عدد الأصناف", inv.shape[0])
-        st.bar_chart(inv.set_index('name')['quantity'])
+    st.divider()
+
+    if st.button("📤 إرسال تقرير اليوم إلى التليجرام"):
+        send_daily_report()
+        st.success("تم إرسال التقرير")
 
 # --- التطبيق ---
 def main():
@@ -181,12 +205,12 @@ def main():
             st.warning("لا يوجد مخزون")
             return
 
+        name = st.selectbox("اسم الصنف", data['name'].unique())
+
+        filtered = data[data['name'] == name]
+        brand = st.selectbox("الماركة", filtered['brand'].unique(), key=name)
+
         with st.form("out_form"):
-            name = st.selectbox("اسم الصنف", data['name'].unique())
-
-            filtered = data[data['name'] == name]
-            brand = st.selectbox("الماركة", filtered['brand'].unique())
-
             qty = st.number_input("الكمية", min_value=1)
             dest = st.text_input("الجهة المستلمة")
 
