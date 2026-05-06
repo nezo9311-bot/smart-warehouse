@@ -6,27 +6,63 @@ import os
 import requests
 
 # =========================
-# MUST be first Streamlit command
+# إعداد الصفحة (لازم أول سطر)
 # =========================
-st.set_page_config(page_title="نظام المخازن", layout="wide")
+st.set_page_config(
+    page_title="نظام إدارة المخازن",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # =========================
-# Arabic UI
+# CSS عربي + حل السايدبار
 # =========================
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600&display=swap');
 
-html, body, [class*="css"] {
+/* الصفحة */
+html, body {
+    direction: rtl;
+    font-family: 'Cairo', sans-serif;
+}
+
+/* النصوص */
+div, label, span, p {
+    text-align: right !important;
+}
+
+/* الحقول */
+input, textarea, select {
     direction: rtl;
     text-align: right;
-    font-family: 'Cairo', sans-serif;
+}
+
+/* ===== إصلاح السايدبار ===== */
+section[data-testid="stSidebar"] {
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+section[data-testid="stSidebar"] * {
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+/* منع الانقلاب */
+.css-1d391kg, .css-1lcbmhc {
+    direction: rtl !important;
+}
+
+/* تحسين المسافات */
+.block-container {
+    padding: 2rem;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# Telegram
+# تليجرام
 # =========================
 TELEGRAM_TOKEN = os.getenv("8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM")
 CHAT_ID = os.getenv("5716145319")
@@ -41,7 +77,7 @@ def send_telegram(msg):
         pass
 
 # =========================
-# Database
+# قاعدة البيانات
 # =========================
 DIR = "warehouses"
 os.makedirs(DIR, exist_ok=True)
@@ -80,7 +116,7 @@ def get_warehouses():
     return [f.replace(".db", "") for f in os.listdir(DIR) if f.endswith(".db")]
 
 # =========================
-# Operations
+# العمليات
 # =========================
 def add_item(db, name, brand, qty):
     conn = sqlite3.connect(db)
@@ -104,14 +140,13 @@ def add_item(db, name, brand, qty):
 
     c.execute(
         "INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)",
-        ("IN", name, brand, qty, "", str(datetime.now()))
+        ("إدخال", name, brand, qty, "", str(datetime.now()))
     )
 
     conn.commit()
     conn.close()
 
     send_telegram(f"إدخال: {name} - {brand} - {qty}")
-
 
 def remove_item(db, name, brand, qty, dest):
     conn = sqlite3.connect(db)
@@ -122,11 +157,7 @@ def remove_item(db, name, brand, qty, dest):
         (name, brand)
     ).fetchone()
 
-    if not res:
-        conn.close()
-        return False
-
-    if res[0] < qty:
+    if not res or res[0] < qty:
         conn.close()
         return False
 
@@ -139,7 +170,7 @@ def remove_item(db, name, brand, qty, dest):
 
     c.execute(
         "INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)",
-        ("OUT", name, brand, qty, dest, str(datetime.now()))
+        ("إخراج", name, brand, qty, dest, str(datetime.now()))
     )
 
     conn.commit()
@@ -147,16 +178,21 @@ def remove_item(db, name, brand, qty, dest):
 
     send_telegram(f"إخراج: {name} - {brand} - {qty} إلى {dest}")
 
+    if new_qty <= 5:
+        send_telegram(f"تنبيه مخزون منخفض: {name} ({brand}) المتبقي {new_qty}")
+
     return True
 
 # =========================
-# App
+# الواجهة
 # =========================
 st.title("نظام إدارة المخازن")
 
+st.sidebar.title("المخازن")
+
 warehouses = get_warehouses()
 
-new_wh = st.sidebar.text_input("مخزن جديد")
+new_wh = st.sidebar.text_input("إنشاء مخزن جديد")
 if st.sidebar.button("إنشاء"):
     if new_wh:
         create_db(new_wh)
@@ -166,10 +202,10 @@ if not warehouses:
     st.warning("لا يوجد مخازن")
     st.stop()
 
-wh = st.sidebar.selectbox("اختيار المخزن", warehouses)
-db = db_path(wh)
+selected = st.sidebar.selectbox("اختيار المخزن", warehouses)
+db = db_path(selected)
 
-tab1, tab2, tab3 = st.tabs(["إدخال", "إخراج", "المخزون"])
+tab1, tab2, tab3 = st.tabs(["إدخال بضاعة", "إخراج بضاعة", "سجل المخزون"])
 
 # ================= إدخال =================
 with tab1:
@@ -182,17 +218,19 @@ with tab1:
     if data.empty:
         data = pd.DataFrame(columns=["name", "brand", "quantity"])
 
-    name = st.selectbox("الصنف", ["جديد"] + list(data["name"].unique()))
+    st.markdown("الصنف")
+    name = st.selectbox("", ["جديد"] + list(data["name"].unique()))
 
     if name == "جديد":
         name = st.text_input("اسم الصنف")
         brand = st.text_input("الماركة")
     else:
         brands = data[data["name"] == name]["brand"].unique().tolist()
-        if len(brands) == 0:
-            brand = st.text_input("الماركة")
-        else:
-            brand = st.selectbox("الماركة", brands)
+        st.markdown("الماركة")
+        brand = st.selectbox("", brands if brands else ["جديدة"])
+
+        if brand == "جديدة":
+            brand = st.text_input("اسم الماركة")
 
     qty = st.number_input("الكمية", min_value=1)
 
@@ -211,37 +249,46 @@ with tab2:
     if data.empty:
         st.info("لا يوجد مخزون")
     else:
-        name = st.selectbox("الصنف", data["name"].unique())
+        st.markdown("الصنف")
+        name = st.selectbox("", data["name"].unique())
+
         filtered = data[data["name"] == name]
 
         options = [
-            f"{r['brand']} ({r['quantity']})"
+            f"{r['brand']} (المتوفر: {r['quantity']})"
             for _, r in filtered.iterrows()
         ]
 
-        selected = st.selectbox("الماركة", options)
-        brand = selected.split(" (")[0]
+        st.markdown("الماركة")
+        selected_brand = st.selectbox("", options)
+        brand = selected_brand.split(" (")[0]
 
         available = filtered[filtered["brand"] == brand]["quantity"].values[0]
+
+        st.write("المتوفر:", available)
 
         qty = st.number_input("الكمية", 1, int(available))
         dest = st.text_input("الجهة")
 
         if st.button("تنفيذ"):
             ok = remove_item(db, name, brand, qty, dest)
+
             if ok:
                 st.success("تم الإخراج")
             else:
                 st.error("الكمية غير كافية")
 
-# ================= مخزون =================
+# ================= سجل =================
 with tab3:
-    st.subheader("المخزون")
+    st.subheader("سجل العمليات")
 
     conn = sqlite3.connect(db)
     inv = pd.read_sql("SELECT * FROM inventory", conn)
     mov = pd.read_sql("SELECT * FROM movements ORDER BY date DESC", conn)
     conn.close()
 
-    st.dataframe(inv)
-    st.dataframe(mov)
+    st.write("المخزون")
+    st.dataframe(inv, use_container_width=True)
+
+    st.write("الحركة")
+    st.dataframe(mov, use_container_width=True)
