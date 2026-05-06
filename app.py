@@ -14,45 +14,6 @@ st.set_page_config(
 )
 
 # =========================
-# CSS عربي
-# =========================
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600&display=swap');
-
-html, body {
-    font-family: 'Cairo', sans-serif;
-}
-
-label, p, h1, h2, h3 {
-    text-align: right !important;
-}
-
-input {
-    text-align: right;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# =========================
-# Telegram
-# =========================
-TELEGRAM_TOKEN = os.getenv("8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM")
-CHAT_ID = os.getenv("5716145319")
-
-def send_telegram(msg):
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("Telegram not configured")
-        return
-
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        r = requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
-        print("Telegram:", r.text)
-    except Exception as e:
-        print("Telegram error:", e)
-
-# =========================
 # قاعدة البيانات
 # =========================
 DIR = "warehouses"
@@ -90,6 +51,21 @@ def create_db(name):
 
 def get_warehouses():
     return [f.replace(".db", "") for f in os.listdir(DIR) if f.endswith(".db")]
+
+# =========================
+# Telegram
+# =========================
+TELEGRAM_TOKEN = os.getenv("8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM")
+CHAT_ID = os.getenv("5716145319")
+
+def send_telegram(msg):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+    except:
+        pass
 
 # =========================
 # عمليات
@@ -178,31 +154,25 @@ db = db_path(selected)
 tab1, tab2, tab3 = st.tabs(["إدخال", "إخراج", "المخزون"])
 
 # =========================
-# Session State (لحذف الحقول)
+# إدخال (FORM FIX)
 # =========================
-if "name" not in st.session_state:
-    st.session_state.name = ""
-if "brand" not in st.session_state:
-    st.session_state.brand = ""
-
-# ================= إدخال =================
 with tab1:
     st.subheader("إدخال بضاعة")
 
-    name = st.text_input("الصنف", key="name")
-    brand = st.text_input("الماركة", key="brand")
-    qty = st.number_input("الكمية", min_value=1)
+    with st.form("add_form"):
+        name = st.text_input("الصنف")
+        brand = st.text_input("الماركة")
+        qty = st.number_input("الكمية", min_value=1)
 
-    if st.button("حفظ"):
-        add_item(db, name, brand, qty)
+        submit = st.form_submit_button("حفظ")
 
-        # تفريغ الحقول
-        st.session_state.name = ""
-        st.session_state.brand = ""
+        if submit:
+            add_item(db, name, brand, qty)
+            st.success("تم الإدخال بنجاح")
 
-        st.rerun()
-
-# ================= إخراج =================
+# =========================
+# إخراج
+# =========================
 with tab2:
     st.subheader("إخراج بضاعة")
 
@@ -239,7 +209,9 @@ with tab2:
             else:
                 st.error("الكمية غير كافية")
 
-# ================= مخزون =================
+# =========================
+# المخزون
+# =========================
 with tab3:
     st.subheader("المخزون")
 
