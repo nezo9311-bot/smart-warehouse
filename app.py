@@ -5,7 +5,9 @@ from datetime import datetime
 import os
 import requests
 
-# ---------------- Telegram ----------------
+# =========================
+# Telegram
+# =========================
 TELEGRAM_TOKEN = os.getenv("8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM")
 CHAT_ID = os.getenv("5716145319")
 
@@ -18,7 +20,10 @@ def send_telegram(message):
     except:
         pass
 
-# ---------------- Warehouses ----------------
+
+# =========================
+# Warehouses
+# =========================
 WAREHOUSE_DIR = "warehouses"
 
 if not os.path.exists(WAREHOUSE_DIR):
@@ -57,8 +62,11 @@ def create_warehouse(name):
 def db_path(name):
     return f"{WAREHOUSE_DIR}/{name}.db"
 
-# ---------------- Operations ----------------
-def add_item(db, name, brand, qty):
+
+# =========================
+# Operations
+# =========================
+def add_stock(db, name, brand, qty):
     conn = sqlite3.connect(db)
     c = conn.cursor()
 
@@ -86,10 +94,10 @@ def add_item(db, name, brand, qty):
     conn.commit()
     conn.close()
 
-    send_telegram(f"Stock Added\n{name} ({brand})\nQty: {qty}")
+    send_telegram(f"Stock Added\nProduct: {name}\nBrand: {brand}\nQty: {qty}")
 
 
-def remove_item(db, name, brand, qty, dest):
+def remove_stock(db, name, brand, qty, dest):
     conn = sqlite3.connect(db)
     c = conn.cursor()
 
@@ -98,45 +106,52 @@ def remove_item(db, name, brand, qty, dest):
         (name, brand)
     ).fetchone()
 
-    if res and res[0] >= qty:
-        new_qty = res[0] - qty
-
-        c.execute(
-            "UPDATE inventory SET quantity = quantity - ? WHERE name=? AND brand=?",
-            (qty, name, brand)
-        )
-
-        c.execute(
-            "INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)",
-            ("OUT", name, brand, qty, dest, datetime.now())
-        )
-
-        conn.commit()
+    if not res or res[0] < qty:
         conn.close()
+        return False, 0
 
-        send_telegram(f"Stock Removed\n{name} ({brand})\nQty: {qty}\nTo: {dest}")
+    new_qty = res[0] - qty
 
-        if new_qty <= 5:
-            send_telegram(f"Low Stock Warning\n{name} ({brand}) Remaining: {new_qty}")
+    c.execute(
+        "UPDATE inventory SET quantity = quantity - ? WHERE name=? AND brand=?",
+        (qty, name, brand)
+    )
 
-        return True
+    c.execute(
+        "INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)",
+        ("OUT", name, brand, qty, dest, datetime.now())
+    )
 
+    conn.commit()
     conn.close()
-    return False
 
-# ---------------- UI ----------------
+    send_telegram(
+        f"Stock Removed\nProduct: {name}\nBrand: {brand}\nQty: {qty}\nDestination: {dest}"
+    )
+
+    if new_qty <= 5:
+        send_telegram(
+            f"Low Stock Warning\nProduct: {name}\nBrand: {brand}\nRemaining: {new_qty}"
+        )
+
+    return True, new_qty
+
+
+# =========================
+# UI
+# =========================
 def main():
     st.set_page_config(page_title="Warehouse System", layout="wide")
 
     st.title("Warehouse Management System")
 
-    # ---------- Warehouses ----------
+    # -------- Sidebar --------
     st.sidebar.header("Warehouses")
 
     warehouses = get_warehouses()
 
-    new_wh = st.sidebar.text_input("Create warehouse")
-    if st.sidebar.button("Create"):
+    new_wh = st.sidebar.text_input("Create new warehouse")
+    if st.sidebar.button("Create Warehouse"):
         if new_wh:
             create_warehouse(new_wh)
             st.rerun()
@@ -150,7 +165,7 @@ def main():
 
     tab1, tab2, tab3 = st.tabs(["Add Stock", "Remove Stock", "Dashboard"])
 
-    # ---------------- Add ----------------
+    # ================= Add =================
     with tab1:
         st.subheader("Add Stock")
 
@@ -158,25 +173,25 @@ def main():
         data = pd.read_sql("SELECT * FROM inventory", conn)
         conn.close()
 
-        name = st.selectbox("Product", ["New"] + list(data['name'].unique()))
+        name = st.selectbox("Product", ["New product"] + list(data["name"].unique()))
 
-        if name == "New":
+        if name == "New product":
             name = st.text_input("Product name")
             brand = st.text_input("Brand")
         else:
-            brands = data[data['name'] == name]['brand'].unique()
-            brand = st.selectbox("Brand", list(brands) if len(brands) > 0 else ["New"])
+            brands = data[data["name"] == name]["brand"].unique()
+            brand = st.selectbox("Brand", list(brands) if len(brands) > 0 else ["New brand"])
 
-            if brand == "New":
-                brand = st.text_input("New brand")
+            if brand == "New brand":
+                brand = st.text_input("Brand name")
 
         qty = st.number_input("Quantity", min_value=1)
 
-        if st.button("Save"):
-            add_item(db, name, brand, qty)
-            st.success("Added successfully")
+        if st.button("Save Stock"):
+            add_stock(db, name, brand, qty)
+            st.success("Stock added successfully")
 
-    # ---------------- Remove ----------------
+    # ================= Remove =================
     with tab2:
         st.subheader("Remove Stock")
 
@@ -187,42 +202,46 @@ def main():
         if data.empty:
             st.info("No stock available")
         else:
-            name = st.selectbox("Product", data['name'].unique())
-            filtered = data[data['name'] == name]
+            name = st.selectbox("Product", data["name"].unique())
+            filtered = data[data["name"] == name]
 
             options = [
-                f"{r['brand']} | Remaining: {r['quantity']}"
+                f"{r['brand']} (Available: {r['quantity']})"
                 for _, r in filtered.iterrows()
             ]
 
             selected_brand = st.selectbox("Brand", options)
-            brand = selected_brand.split(" |")[0]
+            brand = selected_brand.split(" (")[0]
 
-            current_qty = filtered[filtered['brand'] == brand]['quantity'].values[0]
+            current_qty = filtered[filtered["brand"] == brand]["quantity"].values[0]
 
-            st.write("Available:", current_qty)
+            st.write("Available quantity:", current_qty)
 
             qty = st.number_input("Quantity", min_value=1, max_value=int(current_qty))
             dest = st.text_input("Destination")
 
-            if st.button("Remove"):
-                ok = remove_item(db, name, brand, qty, dest)
-                if ok:
-                    st.success("Removed successfully")
-                else:
-                    st.error("Not enough stock")
+            if st.button("Remove Stock"):
+                ok, remaining = remove_stock(db, name, brand, qty, dest)
 
-    # ---------------- Dashboard ----------------
+                if ok:
+                    st.success("Stock removed successfully")
+                else:
+                    st.error("Insufficient stock")
+
+    # ================= Dashboard =================
     with tab3:
-        st.subheader("Inventory")
+        st.subheader("Inventory Overview")
 
         conn = sqlite3.connect(db)
         inv = pd.read_sql("SELECT * FROM inventory", conn)
         mov = pd.read_sql("SELECT * FROM movements ORDER BY date DESC", conn)
         conn.close()
 
-        st.dataframe(inv)
-        st.dataframe(mov)
+        st.write("Current Inventory")
+        st.dataframe(inv, use_container_width=True)
+
+        st.write("Movement History")
+        st.dataframe(mov, use_container_width=True)
 
 
 if __name__ == "__main__":
