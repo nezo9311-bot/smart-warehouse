@@ -6,57 +6,35 @@ import os
 import requests
 
 # =========================
-# إعداد الصفحة (لازم أول سطر)
+# إعداد الصفحة
 # =========================
 st.set_page_config(
     page_title="نظام إدارة المخازن",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 # =========================
-# CSS عربي + حل السايدبار
+# تحسين العربية بدون كسر النظام
 # =========================
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600&display=swap');
 
-/* الصفحة */
-html, body {
-    direction: rtl;
+/* لا نستخدم RTL كامل */
+body {
     font-family: 'Cairo', sans-serif;
 }
 
-/* النصوص */
-div, label, span, p {
-    text-align: right !important;
-}
-
-/* الحقول */
-input, textarea, select {
+/* فقط النصوص */
+label, p, h1, h2, h3, h4 {
     direction: rtl;
     text-align: right;
 }
 
-/* ===== إصلاح السايدبار ===== */
-section[data-testid="stSidebar"] {
-    direction: rtl !important;
-    text-align: right !important;
-}
-
-section[data-testid="stSidebar"] * {
-    direction: rtl !important;
-    text-align: right !important;
-}
-
-/* منع الانقلاب */
-.css-1d391kg, .css-1lcbmhc {
-    direction: rtl !important;
-}
-
-/* تحسين المسافات */
-.block-container {
-    padding: 2rem;
+/* الحقول */
+input, textarea {
+    direction: rtl;
+    text-align: right;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -64,8 +42,8 @@ section[data-testid="stSidebar"] * {
 # =========================
 # تليجرام
 # =========================
-TELEGRAM_TOKEN = os.getenv("8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM")
-CHAT_ID = os.getenv("5716145319")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 def send_telegram(msg):
     if not TELEGRAM_TOKEN or not CHAT_ID:
@@ -122,64 +100,33 @@ def add_item(db, name, brand, qty):
     conn = sqlite3.connect(db)
     c = conn.cursor()
 
-    res = c.execute(
-        "SELECT quantity FROM inventory WHERE name=? AND brand=?",
-        (name, brand)
-    ).fetchone()
+    res = c.execute("SELECT quantity FROM inventory WHERE name=? AND brand=?", (name, brand)).fetchone()
 
     if res:
-        c.execute(
-            "UPDATE inventory SET quantity = quantity + ? WHERE name=? AND brand=?",
-            (qty, name, brand)
-        )
+        c.execute("UPDATE inventory SET quantity = quantity + ? WHERE name=? AND brand=?", (qty, name, brand))
     else:
-        c.execute(
-            "INSERT INTO inventory VALUES (?, ?, ?)",
-            (name, brand, qty)
-        )
+        c.execute("INSERT INTO inventory VALUES (?, ?, ?)", (name, brand, qty))
 
-    c.execute(
-        "INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)",
-        ("إدخال", name, brand, qty, "", str(datetime.now()))
-    )
+    c.execute("INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)", ("إدخال", name, brand, qty, "", str(datetime.now())))
 
     conn.commit()
     conn.close()
-
-    send_telegram(f"إدخال: {name} - {brand} - {qty}")
 
 def remove_item(db, name, brand, qty, dest):
     conn = sqlite3.connect(db)
     c = conn.cursor()
 
-    res = c.execute(
-        "SELECT quantity FROM inventory WHERE name=? AND brand=?",
-        (name, brand)
-    ).fetchone()
+    res = c.execute("SELECT quantity FROM inventory WHERE name=? AND brand=?", (name, brand)).fetchone()
 
     if not res or res[0] < qty:
         conn.close()
         return False
 
-    new_qty = res[0] - qty
-
-    c.execute(
-        "UPDATE inventory SET quantity = quantity - ? WHERE name=? AND brand=?",
-        (qty, name, brand)
-    )
-
-    c.execute(
-        "INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)",
-        ("إخراج", name, brand, qty, dest, str(datetime.now()))
-    )
+    c.execute("UPDATE inventory SET quantity = quantity - ? WHERE name=? AND brand=?", (qty, name, brand))
+    c.execute("INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)", ("إخراج", name, brand, qty, dest, str(datetime.now())))
 
     conn.commit()
     conn.close()
-
-    send_telegram(f"إخراج: {name} - {brand} - {qty} إلى {dest}")
-
-    if new_qty <= 5:
-        send_telegram(f"تنبيه مخزون منخفض: {name} ({brand}) المتبقي {new_qty}")
 
     return True
 
@@ -188,11 +135,9 @@ def remove_item(db, name, brand, qty, dest):
 # =========================
 st.title("نظام إدارة المخازن")
 
-st.sidebar.title("المخازن")
-
 warehouses = get_warehouses()
 
-new_wh = st.sidebar.text_input("إنشاء مخزن جديد")
+new_wh = st.sidebar.text_input("إنشاء مخزن")
 if st.sidebar.button("إنشاء"):
     if new_wh:
         create_db(new_wh)
@@ -205,9 +150,9 @@ if not warehouses:
 selected = st.sidebar.selectbox("اختيار المخزن", warehouses)
 db = db_path(selected)
 
-tab1, tab2, tab3 = st.tabs(["إدخال بضاعة", "إخراج بضاعة", "سجل المخزون"])
+tab1, tab2, tab3 = st.tabs(["إدخال", "إخراج", "المخزون"])
 
-# ================= إدخال =================
+# إدخال
 with tab1:
     st.subheader("إدخال بضاعة")
 
@@ -215,30 +160,15 @@ with tab1:
     data = pd.read_sql("SELECT * FROM inventory", conn)
     conn.close()
 
-    if data.empty:
-        data = pd.DataFrame(columns=["name", "brand", "quantity"])
-
-    st.markdown("الصنف")
-    name = st.selectbox("", ["جديد"] + list(data["name"].unique()))
-
-    if name == "جديد":
-        name = st.text_input("اسم الصنف")
-        brand = st.text_input("الماركة")
-    else:
-        brands = data[data["name"] == name]["brand"].unique().tolist()
-        st.markdown("الماركة")
-        brand = st.selectbox("", brands if brands else ["جديدة"])
-
-        if brand == "جديدة":
-            brand = st.text_input("اسم الماركة")
-
+    name = st.text_input("الصنف")
+    brand = st.text_input("الماركة")
     qty = st.number_input("الكمية", min_value=1)
 
     if st.button("حفظ"):
         add_item(db, name, brand, qty)
         st.success("تم الإدخال")
 
-# ================= إخراج =================
+# إخراج
 with tab2:
     st.subheader("إخراج بضاعة")
 
@@ -249,20 +179,10 @@ with tab2:
     if data.empty:
         st.info("لا يوجد مخزون")
     else:
-        st.markdown("الصنف")
-        name = st.selectbox("", data["name"].unique())
-
+        name = st.selectbox("الصنف", data["name"].unique())
         filtered = data[data["name"] == name]
 
-        options = [
-            f"{r['brand']} (المتوفر: {r['quantity']})"
-            for _, r in filtered.iterrows()
-        ]
-
-        st.markdown("الماركة")
-        selected_brand = st.selectbox("", options)
-        brand = selected_brand.split(" (")[0]
-
+        brand = st.selectbox("الماركة", filtered["brand"].unique())
         available = filtered[filtered["brand"] == brand]["quantity"].values[0]
 
         st.write("المتوفر:", available)
@@ -271,24 +191,19 @@ with tab2:
         dest = st.text_input("الجهة")
 
         if st.button("تنفيذ"):
-            ok = remove_item(db, name, brand, qty, dest)
-
-            if ok:
+            if remove_item(db, name, brand, qty, dest):
                 st.success("تم الإخراج")
             else:
                 st.error("الكمية غير كافية")
 
-# ================= سجل =================
+# المخزون
 with tab3:
-    st.subheader("سجل العمليات")
+    st.subheader("المخزون")
 
     conn = sqlite3.connect(db)
     inv = pd.read_sql("SELECT * FROM inventory", conn)
     mov = pd.read_sql("SELECT * FROM movements ORDER BY date DESC", conn)
     conn.close()
 
-    st.write("المخزون")
-    st.dataframe(inv, use_container_width=True)
-
-    st.write("الحركة")
-    st.dataframe(mov, use_container_width=True)
+    st.dataframe(inv)
+    st.dataframe(mov)
