@@ -14,45 +14,43 @@ st.set_page_config(
 )
 
 # =========================
-# تحسين العربية بدون كسر النظام
+# CSS عربي
 # =========================
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600&display=swap');
 
-/* لا نستخدم RTL كامل */
-body {
+html, body {
     font-family: 'Cairo', sans-serif;
 }
 
-/* فقط النصوص */
-label, p, h1, h2, h3, h4 {
-    direction: rtl;
-    text-align: right;
+label, p, h1, h2, h3 {
+    text-align: right !important;
 }
 
-/* الحقول */
-input, textarea {
-    direction: rtl;
+input {
     text-align: right;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# تليجرام
+# Telegram
 # =========================
 TELEGRAM_TOKEN = os.getenv("8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM")
 CHAT_ID = os.getenv("5716145319")
 
 def send_telegram(msg):
     if not TELEGRAM_TOKEN or not CHAT_ID:
+        print("Telegram not configured")
         return
+
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
-    except:
-        pass
+        r = requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+        print("Telegram:", r.text)
+    except Exception as e:
+        print("Telegram error:", e)
 
 # =========================
 # قاعدة البيانات
@@ -94,44 +92,71 @@ def get_warehouses():
     return [f.replace(".db", "") for f in os.listdir(DIR) if f.endswith(".db")]
 
 # =========================
-# العمليات
+# عمليات
 # =========================
 def add_item(db, name, brand, qty):
     conn = sqlite3.connect(db)
     c = conn.cursor()
 
-    res = c.execute("SELECT quantity FROM inventory WHERE name=? AND brand=?", (name, brand)).fetchone()
+    res = c.execute(
+        "SELECT quantity FROM inventory WHERE name=? AND brand=?",
+        (name, brand)
+    ).fetchone()
 
     if res:
-        c.execute("UPDATE inventory SET quantity = quantity + ? WHERE name=? AND brand=?", (qty, name, brand))
+        c.execute(
+            "UPDATE inventory SET quantity = quantity + ? WHERE name=? AND brand=?",
+            (qty, name, brand)
+        )
     else:
-        c.execute("INSERT INTO inventory VALUES (?, ?, ?)", (name, brand, qty))
+        c.execute(
+            "INSERT INTO inventory VALUES (?, ?, ?)",
+            (name, brand, qty)
+        )
 
-    c.execute("INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)", ("إدخال", name, brand, qty, "", str(datetime.now())))
+    c.execute(
+        "INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)",
+        ("إدخال", name, brand, qty, "", str(datetime.now()))
+    )
 
     conn.commit()
     conn.close()
+
+    send_telegram(f"إدخال: {name} - {brand} - {qty}")
+
 
 def remove_item(db, name, brand, qty, dest):
     conn = sqlite3.connect(db)
     c = conn.cursor()
 
-    res = c.execute("SELECT quantity FROM inventory WHERE name=? AND brand=?", (name, brand)).fetchone()
+    res = c.execute(
+        "SELECT quantity FROM inventory WHERE name=? AND brand=?",
+        (name, brand)
+    ).fetchone()
 
     if not res or res[0] < qty:
         conn.close()
         return False
 
-    c.execute("UPDATE inventory SET quantity = quantity - ? WHERE name=? AND brand=?", (qty, name, brand))
-    c.execute("INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)", ("إخراج", name, brand, qty, dest, str(datetime.now())))
+    c.execute(
+        "UPDATE inventory SET quantity = quantity - ? WHERE name=? AND brand=?",
+        (qty, name, brand)
+    )
+
+    c.execute(
+        "INSERT INTO movements VALUES (?, ?, ?, ?, ?, ?)",
+        ("إخراج", name, brand, qty, dest, str(datetime.now()))
+    )
 
     conn.commit()
     conn.close()
 
+    send_telegram(f"إخراج: {name} - {brand} - {qty} إلى {dest}")
+
     return True
 
 # =========================
-# الواجهة
+# التطبيق
 # =========================
 st.title("نظام إدارة المخازن")
 
@@ -152,23 +177,32 @@ db = db_path(selected)
 
 tab1, tab2, tab3 = st.tabs(["إدخال", "إخراج", "المخزون"])
 
-# إدخال
+# =========================
+# Session State (لحذف الحقول)
+# =========================
+if "name" not in st.session_state:
+    st.session_state.name = ""
+if "brand" not in st.session_state:
+    st.session_state.brand = ""
+
+# ================= إدخال =================
 with tab1:
     st.subheader("إدخال بضاعة")
 
-    conn = sqlite3.connect(db)
-    data = pd.read_sql("SELECT * FROM inventory", conn)
-    conn.close()
-
-    name = st.text_input("الصنف")
-    brand = st.text_input("الماركة")
+    name = st.text_input("الصنف", key="name")
+    brand = st.text_input("الماركة", key="brand")
     qty = st.number_input("الكمية", min_value=1)
 
     if st.button("حفظ"):
         add_item(db, name, brand, qty)
-        st.success("تم الإدخال")
 
-# إخراج
+        # تفريغ الحقول
+        st.session_state.name = ""
+        st.session_state.brand = ""
+
+        st.rerun()
+
+# ================= إخراج =================
 with tab2:
     st.subheader("إخراج بضاعة")
 
@@ -182,7 +216,14 @@ with tab2:
         name = st.selectbox("الصنف", data["name"].unique())
         filtered = data[data["name"] == name]
 
-        brand = st.selectbox("الماركة", filtered["brand"].unique())
+        options = [
+            f"{r['brand']} (المتوفر: {r['quantity']})"
+            for _, r in filtered.iterrows()
+        ]
+
+        selected_brand = st.selectbox("الماركة", options)
+        brand = selected_brand.split(" (")[0]
+
         available = filtered[filtered["brand"] == brand]["quantity"].values[0]
 
         st.write("المتوفر:", available)
@@ -191,12 +232,14 @@ with tab2:
         dest = st.text_input("الجهة")
 
         if st.button("تنفيذ"):
-            if remove_item(db, name, brand, qty, dest):
+            ok = remove_item(db, name, brand, qty, dest)
+
+            if ok:
                 st.success("تم الإخراج")
             else:
                 st.error("الكمية غير كافية")
 
-# المخزون
+# ================= مخزون =================
 with tab3:
     st.subheader("المخزون")
 
