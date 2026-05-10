@@ -21,30 +21,34 @@ st.set_page_config(page_title="نظام النذير الذكي - Google Sheets"
 genai.configure(api_key=GEMINI_API_KEY)
 
 # =========================
-# Google Sheets اتصال آمن
+# Google Sheets اتصال مطور ومصلح
 # =========================
 def get_gspread_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
-    # محاولة القراءة من المتغير الذي أنشأته GOOGLE_SHEETS_CREDS
     creds_json = os.getenv("GOOGLE_SHEETS_CREDS")
     
     if creds_json:
-        # إذا كان التطبيق يعمل على الرابط (Render/Streamlit Cloud)
-        creds_dict = json.loads(creds_json)
-        creds = ServiceAccountCredentials.from_json_dict(creds_dict, scope)
+        try:
+            creds_dict = json.loads(creds_json)
+            
+            # --- الإصلاح السحري هنا ---
+            # هذا السطر يضمن أن المفتاح الخاص يحتوي على الأسطر الجديدة الصحيحة
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            
+            creds = ServiceAccountCredentials.from_json_dict(creds_dict, scope)
+        except Exception as e:
+            st.error(f"خطأ في معالجة بيانات JSON: {e}")
+            st.stop()
     else:
-        # إذا كنت تعمل على جهازك الشخصي وتملك ملف creds.json
         try:
             creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
         except:
-            st.error("خطأ: لم يتم العثور على متغير GOOGLE_SHEETS_CREDS أو ملف creds.json")
+            st.error("لم يتم العثور على مفاتيح الوصول!")
             st.stop()
             
     return gspread.authorize(creds)
-
-client = get_gspread_client()
-
 # =========================
 # وظائف مساعدة
 # =========================
