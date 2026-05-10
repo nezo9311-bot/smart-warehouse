@@ -1,13 +1,13 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from google.oauth2.service_account import Credentials
+# لاحظ السطر التالي، هذا هو البديل الجديد والمطلوب:
+from google.oauth2.service_account import Credentials 
 from datetime import datetime
 import requests
 import json
 import os
 import google.generativeai as genai
-
 # =========================
 # الإعدادات الأساسية (بياناتك)
 # =========================
