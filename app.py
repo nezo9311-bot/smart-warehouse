@@ -1,28 +1,27 @@
 import streamlit as st
 import pandas as pd
 import gspread
-# لاحظ السطر التالي، هذا هو البديل الجديد والمطلوب:
-from google.oauth2.service_account import Credentials 
+from google.oauth2.service_account import Credentials
 from datetime import datetime
 import requests
 import json
 import os
+import base64  # لإصلاح مشكلة تشفير المفاتيح
 import google.generativeai as genai
+
 # =========================
-# الإعدادات الأساسية (بياناتك)
+# 1. الإعدادات والربط
 # =========================
 TELEGRAM_TOKEN = "8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM"
 CHAT_ID = "5716145319"
 GEMINI_API_KEY = "AIzaSyC11sWBSRyYut0SVzLxYGADh2mEk2HxeVg"
 ADMIN_PASSWORD = "123"
 
-st.set_page_config(page_title="نظام النذير الذكي v3.0", layout="wide")
-
-# إعداد الذكاء الاصطناعي
+st.set_page_config(page_title="نظام النذير الذكي - النسخة الآمنة", layout="wide")
 genai.configure(api_key=GEMINI_API_KEY)
 
 # =========================
-# الاتصال بـ Google Sheets (المطور)
+# 2. الاتصال بـ Google Sheets (حل مشكلة JWT)
 # =========================
 def get_gspread_client():
     scope = [
@@ -30,30 +29,30 @@ def get_gspread_client():
         "https://www.googleapis.com/auth/drive"
     ]
     
-    # جلب المفاتيح من Render Environment Variable
-    creds_json = os.getenv("GOOGLE_SHEETS_CREDS")
+    # جلب النص المشفر بـ Base64 من إعدادات Render
+    encoded_creds = os.getenv("GOOGLE_SHEETS_CREDS")
     
-    if creds_json:
+    if encoded_creds:
         try:
-            info = json.loads(creds_json)
-            # إصلاح مشكلة الأسطر الجديدة في المفتاح الخاص (حل خطأ JWT Signature)
-            if "private_key" in info:
-                info["private_key"] = info["private_key"].replace("\\n", "\n")
+            # فك التشفير لاسترجاع بيانات JSON الأصلية بشكل سليم
+            decoded_creds = base64.b64decode(encoded_creds).decode('utf-8')
+            info = json.loads(decoded_creds)
             
+            # الاتصال الرسمي
             creds = Credentials.from_service_account_info(info, scopes=scope)
             return gspread.authorize(creds)
         except Exception as e:
-            st.error(f"خطأ في معالجة مفاتيح جوجل: {e}")
+            st.error(f"❌ خطأ في فك تشفير المفاتيح: {e}")
             st.stop()
     else:
-        st.error("لم يتم العثور على متغير GOOGLE_SHEETS_CREDS. تأكد من إضافته في إعدادات Render.")
+        st.error("❗ لم يتم العثور على متغير GOOGLE_SHEETS_CREDS في Render")
         st.stop()
 
-# تفعيل الاتصال
+# تفعيل العميل
 client = get_gspread_client()
 
 # =========================
-# وظائف النظام المساعدة
+# 3. الوظائف المساعدة
 # =========================
 def send_telegram(msg):
     try:
@@ -66,6 +65,7 @@ def get_worksheet(sheet_name, ws_title, cols):
         sh = client.open(sheet_name)
     except:
         sh = client.create(sheet_name)
+        # ملاحظة: يجب مشاركة الشيت يدوياً مع البريد الموجود في ملف الـ JSON
     
     try:
         ws = sh.worksheet(ws_title)
@@ -74,93 +74,77 @@ def get_worksheet(sheet_name, ws_title, cols):
         ws.append_row(cols)
     return ws
 
-def load_data(ws):
-    data = ws.get_all_records()
-    return pd.DataFrame(data)
-
 # =========================
-# واجهة المستخدم الرئيسية
+# 4. واجهة التطبيق
 # =========================
-st.sidebar.title("🏢 مستودع النذير الذكي")
-warehouse_name = st.sidebar.text_input("اسم ملف البيانات (Google Sheets)", value="My_Warehouse_2026")
+st.sidebar.title("🏢 مستودع النذير")
+warehouse_name = st.sidebar.text_input("اسم ملف البيانات", value="Nazeer_Warehouse_Data")
 
 if not warehouse_name:
-    st.warning("يرجى إدخال اسم للمستودع في القائمة الجانبية.")
+    st.info("اكتب اسم الملف للبدء")
     st.stop()
 
-# تحميل الجداول
+# تحميل الجداول من جوجل شيت
 ws_inv = get_worksheet(warehouse_name, "inventory", ["name", "brand", "quantity"])
 ws_mov = get_worksheet(warehouse_name, "movements", ["type", "name", "brand", "quantity", "dest", "date"])
 
-inv_df = load_data(ws_inv)
-mov_df = load_data(ws_mov)
+inv_df = pd.DataFrame(ws_inv.get_all_records())
+mov_df = pd.DataFrame(ws_mov.get_all_records())
 
 tab1, tab2, tab3, tab4 = st.tabs(["📥 توريد", "📤 صرف", "📊 جرد", "🤖 مستشار AI"])
 
-# --- تبويب التوريد ---
+# --- توريد بضاعة ---
 with tab1:
-    st.subheader("تسجيل دخول بضاعة")
-    with st.form("in_form", clear_on_submit=True):
-        name = st.text_input("اسم الصنف")
-        brand = st.text_input("الماركة")
-        qty = st.number_input("الكمية", min_value=1)
-        if st.form_submit_button("حفظ العملية"):
-            if name and brand:
-                mask = (inv_df['name'] == name) & (inv_df['brand'] == brand)
-                if mask.any():
-                    row_idx = inv_df.index[mask][0] + 2 # +2 لأن جوجل يبدأ من 1 وهناك رأس للجدول
-                    new_qty = int(inv_df.loc[mask, 'quantity'].values[0]) + qty
-                    ws_inv.update_cell(row_idx, 3, new_qty)
-                else:
-                    ws_inv.append_row([name, brand, qty])
-                
-                ws_mov.append_row(["إدخال", name, brand, qty, "", str(datetime.now())])
-                send_telegram(f"✅ توريد جديد: {name} ({brand}) - كمية: {qty}")
-                st.success("تم الحفظ بنجاح!")
-                st.rerun()
+    with st.form("in"):
+        n = st.text_input("اسم الصنف")
+        b = st.text_input("الماركة")
+        q = st.number_input("الكمية", 1)
+        if st.form_submit_button("حفظ التوريد"):
+            mask = (inv_df['name'] == n) & (inv_df['brand'] == b)
+            if mask.any():
+                idx = inv_df.index[mask][0] + 2
+                new_q = int(inv_df.loc[mask, 'quantity'].values[0]) + q
+                ws_inv.update_cell(idx, 3, new_q)
+            else:
+                ws_inv.append_row([n, b, q])
+            ws_mov.append_row(["إدخال", n, b, q, "", str(datetime.now())])
+            send_telegram(f"📥 تم توريد {q} من {n} ({b})")
+            st.success("تم الحفظ!")
+            st.rerun()
 
-# --- تبويب الصرف ---
+# --- صرف بضاعة ---
 with tab2:
-    st.subheader("تسجيل خروج بضاعة")
-    if inv_df.empty:
-        st.info("المخزن فارغ.")
-    else:
-        with st.form("out_form", clear_on_submit=True):
-            name_sel = st.selectbox("الصنف", inv_df['name'].unique())
-            brand_sel = st.selectbox("الماركة", inv_df[inv_df['name']==name_sel]['brand'])
-            qty_out = st.number_input("الكمية", min_value=1)
+    if not inv_df.empty:
+        with st.form("out"):
+            n_s = st.selectbox("الصنف", inv_df['name'].unique())
+            b_s = st.selectbox("الماركة", inv_df[inv_df['name']==n_s]['brand'])
+            q_s = st.number_input("الكمية", 1)
             dest = st.text_input("الجهة المستلمة")
             if st.form_submit_button("تنفيذ الصرف"):
-                curr_qty = inv_df[(inv_df['name']==name_sel) & (inv_df['brand']==brand_sel)]['quantity'].values[0]
-                if curr_qty >= qty_out:
-                    row_idx = inv_df.index[(inv_df['name']==name_sel) & (inv_df['brand']==brand_sel)][0] + 2
-                    ws_inv.update_cell(row_idx, 3, int(curr_qty - qty_out))
-                    ws_mov.append_row(["إخراج", name_sel, brand_sel, qty_out, dest, str(datetime.now())])
-                    send_telegram(f"⚠️ صرف مخزني: {name_sel} إلى {dest} - كمية: {qty_out}")
-                    st.success("تم التحديث!")
+                curr = inv_df[(inv_df['name']==n_s) & (inv_df['brand']==b_s)]['quantity'].values[0]
+                if curr >= q_s:
+                    idx = inv_df.index[(inv_df['name']==n_s) & (inv_df['brand']==b_s)][0] + 2
+                    ws_inv.update_cell(idx, 3, int(curr - q_s))
+                    ws_mov.append_row(["إخراج", n_s, b_s, q_s, dest, str(datetime.now())])
+                    send_telegram(f"📤 صرف بضاعة: {n_s} إلى {dest}")
+                    st.success("تم الصرف")
                     st.rerun()
-                else:
-                    st.error("الكمية غير كافية!")
+                else: st.error("الكمية غير كافية")
 
-# --- تبويب الجرد ---
+# --- جرد البيانات ---
 with tab3:
-    st.subheader("المخزون المتوفر حالياً")
+    st.subheader("📦 المخزون الحالي")
     st.dataframe(inv_df, use_container_width=True)
-    st.subheader("سجل الحركات الأخير")
-    st.dataframe(mov_df.tail(20), use_container_width=True)
+    st.subheader("📜 سجل العمليات")
+    st.dataframe(mov_df.tail(15), use_container_width=True)
 
-# --- تبويب الذكاء الاصطناعي ---
+# --- المستشار الذكي ---
 with tab4:
-    st.subheader("التحليل الذكي (Gemini AI)")
-    pw = st.text_input("أدخل كلمة سر الإدارة للتحليل", type="password")
-    if pw == ADMIN_PASSWORD:
-        if st.button("تحليل حالة السوق والمخزن"):
-            with st.spinner("جاري التواصل مع الخبير الرقمي..."):
-                try:
-                    model = genai.GenerativeModel('gemini-1.5-flash')
-                    prompt = f"أنا تاجر في السودان، وهذا مخزني: {inv_df.to_string()}. أعطني نصيحة تجارية بخصوص الأسعار والدولار والسلع التي يجب أن أتمسك بها."
-                    response = model.generate_content(prompt)
-                    st.markdown(response.text)
-                    send_telegram(f"💡 نصيحة AI للنذير:\n{response.text[:200]}...")
-                except Exception as e:
-                    st.error(f"فشل التحليل: {e}")
+    st.subheader("🤖 نصيحة الذكاء الاصطناعي")
+    if st.text_input("كلمة سر الإدارة", type="password") == ADMIN_PASSWORD:
+        if st.button("تحليل المخزون"):
+            with st.spinner("جاري التحليل..."):
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                res = model.generate_content(f"أنا تاجر، مخزني هو: {inv_df.to_string()}. الدولار متقلب، ماذا تنصحني؟")
+                st.markdown(res.text)
+                send_telegram(f"💡 نصيحة AI: {res.text[:100]}...")
