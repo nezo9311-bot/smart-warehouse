@@ -27,8 +27,21 @@ supabase: Client = init_supabase()
 def get_data(table):
     try:
         res = supabase.table(table).select("*").execute()
-        return pd.DataFrame(res.data) if res.data else pd.DataFrame()
-    except: return pd.DataFrame()
+        if not res.data:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(res.data)
+        
+        # --- تنظيف البيانات فور جلبها ---
+        if not df.empty and 'warehouse' in df.columns:
+            # تحويل العمود لنصوص وحذف الفراغات
+            df['warehouse'] = df['warehouse'].fillna('unknown').astype(str)
+            # حذف أي صفوف تحمل قيم "غير معرفة" أو فارغة
+            df = df[~df['warehouse'].lower().isin(['nan', 'none', 'null', '', 'unknown'])]
+        
+        return df
+    except:
+        return pd.DataFrame()
 
 def send_telegram(msg):
     try:
@@ -37,21 +50,15 @@ def send_telegram(msg):
     except: pass
 
 # =========================
-# 2. بناء قائمة المخازن (حل جذري لخطأ lower)
+# 2. بناء قائمة المخازن
 # =========================
 inv_df = get_data("inventory")
 default_warehouses = ["مخزن البخاري", "مخزن الجديد"]
 
-if not inv_df.empty and 'warehouse' in inv_df.columns:
-    # الحصول على القيم الفريدة
-    unique_vals = inv_df['warehouse'].unique()
-    # تنظيف القائمة: تحويل كل قيمة لنص ثم التحقق منها
-    db_whs = []
-    for x in unique_vals:
-        x_str = str(x).strip() # تحويل لأي قيمة لنص فوراً
-        if x_str.lower() not in ['nan', 'none', '', 'null']:
-            db_whs.append(x_str)
-    
+# استخلاص الأسماء بأمان تام
+if not inv_df.empty:
+    db_whs = inv_df['warehouse'].unique().tolist()
+    # دمج القائمة الافتراضية مع ما في القاعدة والترتيب
     wh_list = sorted(list(set(default_warehouses + db_whs)))
 else:
     wh_list = default_warehouses
@@ -67,14 +74,13 @@ tab1, tab2, tab3, tab4 = st.tabs(["📊 جرد المخازن", "📥 توريد
 with tab1:
     sel_wh = st.selectbox("اختر المخزن", wh_list)
     if not inv_df.empty:
-        inv_df['warehouse'] = inv_df['warehouse'].astype(str)
         disp = inv_df[inv_df['warehouse'] == sel_wh]
         if not disp.empty:
             st.table(disp[['name', 'brand', 'quantity']])
         else:
-            st.info(f"المخزن {sel_wh} لا يحتوي على بضائع حالياً.")
+            st.info(f"المخزن {sel_wh} لا يحتوي على بضائع.")
 
-# --- التبويب 2: التوريد (فصل الأصناف حسب الماركة) ---
+# --- التبويب 2: التوريد ---
 with tab2:
     st.subheader("إضافة بضاعة")
     with st.form("in_form", clear_on_submit=True):
@@ -104,7 +110,6 @@ with tab3:
     st.subheader("سحب بضاعة")
     if not inv_df.empty:
         source_wh = st.selectbox("اصرف من:", wh_list)
-        inv_df['warehouse'] = inv_df['warehouse'].astype(str)
         items = inv_df[(inv_df['warehouse'] == source_wh) & (inv_df['quantity'] > 0)]
         
         if not items.empty:
@@ -120,7 +125,7 @@ with tab3:
                     if row['quantity'] >= q_o:
                         supabase.table("inventory").update({"quantity": int(row['quantity'] - q_o)}).eq("id", row['id']).execute()
                         send_telegram(f"📤 صرف: {row['name']} ({row['brand']}) من {source_wh}")
-                        st.success("تم الصرف بنجاح")
+                        st.success("تم الصرف")
                         st.rerun()
         else: st.warning("المخزن فارغ.")
 
@@ -129,7 +134,6 @@ with tab4:
     st.subheader("🛠️ الإدارة")
     if st.text_input("كلمة السر", type="password") == ADMIN_PASSWORD:
         if not inv_df.empty:
-            inv_df['warehouse'] = inv_df['warehouse'].astype(str)
             item_manage = st.selectbox("اختر صنفاً للحذف", 
                                       inv_df.apply(lambda x: f"{x['name']} | {x['brand']} | {x['warehouse']}", axis=1))
             idx = inv_df.index[inv_df.apply(lambda x: f"{x['name']} | {x['brand']} | {x['warehouse']}", axis=1) == item_manage][0]
