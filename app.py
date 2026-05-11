@@ -4,36 +4,29 @@ from supabase import create_client, Client
 from datetime import datetime
 import requests
 import os
-import google.generativeai as genai
 
 # =========================
 # 1. الإعدادات والربط
 # =========================
-# جلب الروابط من إعدادات Render
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-# إعدادات التليجرام والذكاء الاصطناعي
 TELEGRAM_TOKEN = "8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM"
 CHAT_ID = "5716145319"
-GEMINI_API_KEY = "AIzaSyC11sWBSRyYut0SVzLxYGADh2mEk2HxeVg"
 ADMIN_PASSWORD = "123"
 
-st.set_page_config(page_title="نظام النذير - النسخة الذكية", layout="wide")
-genai.configure(api_key=GEMINI_API_KEY)
+st.set_page_config(page_title="نظام النذير للمخازن", layout="wide")
 
-# الاتصال بـ Supabase
+# تنظيف الرابط والاتصال بـ Supabase
 @st.cache_resource
 def init_supabase():
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        st.error("❗ تأكد من إضافة SUPABASE_URL و SUPABASE_KEY في إعدادات Render")
-        st.stop()
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    url = SUPABASE_URL.strip().replace("/rest/v1/", "")
+    if url.endswith("/"): url = url[:-1]
+    return create_client(url, SUPABASE_KEY)
 
 supabase: Client = init_supabase()
 
 # =========================
-# 2. وظائف النظام
+# 2. وظائف مساعدة
 # =========================
 def send_telegram(msg):
     try:
@@ -41,108 +34,134 @@ def send_telegram(msg):
         requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
     except: pass
 
-def get_inventory_df():
-    # جلب البيانات من جدول inventory
-    res = supabase.table("inventory").select("*").execute()
-    if res.data:
-        return pd.DataFrame(res.data)
-    return pd.DataFrame(columns=["name", "brand", "quantity"])
-
-def get_movements_df():
-    # جلب آخر 20 حركة من جدول movements
-    res = supabase.table("movements").select("*").order("date", desc=True).limit(20).execute()
-    if res.data:
-        return pd.DataFrame(res.data)
-    return pd.DataFrame(columns=["type", "name", "brand", "quantity", "dest", "date"])
+def get_data(table):
+    res = supabase.table(table).select("*").execute()
+    return pd.DataFrame(res.data) if res.data else pd.DataFrame()
 
 # =========================
-# 3. واجهة التطبيق
+# 3. واجهة المستخدم
 # =========================
-st.sidebar.title("🏢 مستودع النذير")
-st.sidebar.success("متصل بـ Supabase ✅")
+st.sidebar.title("🏢 مستودعات النذير")
+st.sidebar.markdown("---")
 
-# تحميل البيانات الحالية
-inv_df = get_inventory_df()
-mov_df = get_movements_df()
+# تحميل البيانات
+inv_df = get_data("inventory")
+mov_df = get_data("movements")
 
-tab1, tab2, tab3, tab4 = st.tabs(["📥 توريد", "📤 صرف", "📊 جرد", "🤖 مستشار AI"])
+# استخراج قائمة المخازن الفريدة
+if not inv_df.empty and 'warehouse' in inv_df.columns:
+    wh_list = sorted(inv_df['warehouse'].unique().tolist())
+else:
+    wh_list = ["المخزن الرئيسي"]
 
-# --- توريد بضاعة ---
+tab1, tab2, tab3, tab4 = st.tabs(["📊 عرض وجرد", "📥 توريد", "📤 صرف", "🛠️ إدارة (تعديل/حذف)"])
+
+# --- التبويب 1: عرض المخازن منفصلة ---
 with tab1:
-    st.subheader("إضافة بضاعة للمستودع")
+    st.subheader("🔍 عرض مخزون محدد")
+    sel_wh = st.selectbox("اختر المخزن لعرض جرد بضاعته", wh_list)
+    
+    if not inv_df.empty:
+        disp_df = inv_df[inv_df['warehouse'] == sel_wh]
+        if not disp_df.empty:
+            st.dataframe(disp_df[['name', 'brand', 'quantity']], use_container_width=True)
+        else:
+            st.info("هذا المخزن فارغ حالياً.")
+    else:
+        st.warning("لا توجد بيانات بضاعة مسجلة.")
+
+# --- التبويب 2: التوريد (إضافة مخزون) ---
+with tab2:
+    st.subheader("📥 توريد بضاعة جديدة")
     with st.form("in_form", clear_on_submit=True):
-        n = st.text_input("اسم الصنف").strip()
-        b = st.text_input("الماركة").strip()
-        q = st.number_input("الكمية المضافة", min_value=1, step=1)
+        col1, col2 = st.columns(2)
+        with col1:
+            wh_name = st.text_input("اسم المخزن (جديد أو موجود)", value=wh_list[0])
+            n = st.text_input("اسم الصنف")
+        with col2:
+            b = st.text_input("الماركة")
+            q = st.number_input("الكمية الموردة", min_value=1)
         
-        if st.form_submit_button("حفظ التوريد"):
-            if n and b:
-                # التأكد إذا كان الصنف موجوداً لزيادة الكمية أو إنشائه
-                match = supabase.table("inventory").select("*").eq("name", n).eq("brand", b).execute()
+        if st.form_submit_button("اعتماد التوريد"):
+            if wh_name and n:
+                # التحقق من وجود الصنف في نفس المخزن
+                match = supabase.table("inventory").select("*").eq("name", n).eq("warehouse", wh_name).execute()
                 
                 if match.data:
                     new_q = int(match.data[0]['quantity']) + q
-                    supabase.table("inventory").update({"quantity": new_q}).eq("name", n).eq("brand", b).execute()
+                    supabase.table("inventory").update({"quantity": new_q}).eq("id", match.data[0]['id']).execute()
                 else:
-                    supabase.table("inventory").insert({"name": n, "brand": b, "quantity": q}).execute()
+                    supabase.table("inventory").insert({"name": n, "brand": b, "quantity": q, "warehouse": wh_name}).execute()
                 
-                # تسجيل الحركة
+                # سجل الحركة
                 supabase.table("movements").insert({
                     "type": "إدخال", "name": n, "brand": b, "quantity": q, 
-                    "date": datetime.now().isoformat()
+                    "warehouse": wh_name, "date": datetime.now().isoformat()
                 }).execute()
                 
-                send_telegram(f"📥 تم توريد: {n} ({b})\n🔢 الكمية: {q}")
-                st.success("تم التحديث بنجاح!")
+                send_telegram(f"📥 توريد: {n} ({b})\n📦 المخزن: {wh_name}\n🔢 الكمية: {q}")
+                st.success(f"تمت الإضافة لمخزن {wh_name}")
                 st.rerun()
 
-# --- صرف بضاعة ---
-with tab2:
-    st.subheader("صرف بضاعة إلى جهة")
-    if inv_df.empty:
-        st.info("المخزن فارغ حالياً.")
-    else:
-        with st.form("out_form", clear_on_submit=True):
-            # اختيار الصنف بناءً على الموجود في المخزن
-            n_s = st.selectbox("الصنف", inv_df['name'].unique())
-            b_s = st.selectbox("الماركة", inv_df[inv_df['name']==n_s]['brand'])
-            q_out = st.number_input("الكمية المراد صرفها", min_value=1)
-            dst = st.text_input("الجهة المستلمة")
-            
-            if st.form_submit_button("تنفيذ الصرف"):
-                curr_q = inv_df[(inv_df['name']==n_s) & (inv_df['brand']==b_s)]['quantity'].values[0]
-                
-                if curr_q >= q_out:
-                    new_val = int(curr_q - q_out)
-                    supabase.table("inventory").update({"quantity": new_val}).eq("name", n_s).eq("brand", b_s).execute()
-                    
-                    # تسجيل حركة الصرف
-                    supabase.table("movements").insert({
-                        "type": "إخراج", "name": n_s, "brand": b_s, "quantity": q_out, 
-                        "dest": dst, "date": datetime.now().isoformat()
-                    }).execute()
-                    
-                    send_telegram(f"📤 صرف بضاعة لـ: {dst}\n📦 الصنف: {n_s}\n🔢 الكمية: {q_out}")
-                    st.success("تمت عملية الصرف!")
-                    st.rerun()
-                else:
-                    st.error(f"الكمية غير كافية! المتوفر: {curr_q}")
-
-# --- سجل الجرد ---
+# --- التبويب 3: الصرف ---
 with tab3:
-    st.subheader("📦 حالة المخزون الحالي")
-    st.dataframe(inv_df, use_container_width=True)
-    
-    st.subheader("📜 آخر الحركات")
-    st.dataframe(mov_df, use_container_width=True)
+    st.subheader("📤 صرف بضاعة من مخزن")
+    if not inv_df.empty:
+        with st.form("out_form", clear_on_submit=True):
+            wh_sel_out = st.selectbox("اصرف من مخزن:", wh_list)
+            available_items = inv_df[inv_df['warehouse'] == wh_sel_out]
+            
+            if not available_items.empty:
+                n_out = st.selectbox("الصنف", available_items['name'].unique())
+                b_out = st.selectbox("الماركة", available_items[available_items['name']==n_out]['brand'])
+                q_out = st.number_input("الكمية المنصرفة", min_value=1)
+                dst = st.text_input("الجهة المستلمة")
+                
+                if st.form_submit_button("تأكيد الصرف"):
+                    row = available_items[(available_items['name']==n_out) & (available_items['brand']==b_out)].iloc[0]
+                    if row['quantity'] >= q_out:
+                        new_val = int(row['quantity'] - q_out)
+                        supabase.table("inventory").update({"quantity": new_val}).eq("id", row['id']).execute()
+                        
+                        supabase.table("movements").insert({
+                            "type": "إخراج", "name": n_out, "brand": b_out, "quantity": q_out, 
+                            "warehouse": wh_sel_out, "dest": dst, "date": datetime.now().isoformat()
+                        }).execute()
+                        
+                        send_telegram(f"📤 صرف: {n_out}\n🚚 للجهة: {dst}\n🏢 المخزن: {wh_sel_out}")
+                        st.success("تم الصرف!")
+                        st.rerun()
+                    else: st.error("الكمية غير كافية!")
+            else: st.info("المخزن المختار فارغ.")
+    else: st.warning("لا يوجد مخزون متاح للصرف.")
 
-# --- مستشار AI ---
+# --- التبويب 4: الإدارة (تعديل وحذف) ---
 with tab4:
-    st.subheader("🤖 استشارة الذكاء الاصطناعي")
-    if st.text_input("كلمة السر", type="password") == ADMIN_PASSWORD:
-        if st.button("تحليل المخزون"):
-            with st.spinner("جاري التحليل..."):
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                data_summary = inv_df.to_string(index=False)
-                res = model.generate_content(f"بصفتك خبير تجاري، هذا مخزني: {data_summary}. ما هي نصيحتك لزيادة الربح وإدارة المخزون؟")
-                st.markdown(res.text)
+    st.subheader("🛠️ لوحة تحكم المدير")
+    pwd = st.text_input("أدخل كلمة مرور الإدارة", type="password")
+    
+    if pwd == ADMIN_PASSWORD:
+        if not inv_df.empty:
+            st.divider()
+            item_to_manage = st.selectbox("اختر الصنف المراد تعديله أو حذفه", 
+                                        inv_df.apply(lambda x: f"{x['name']} | {x['brand']} | {x['warehouse']}", axis=1))
+            
+            idx = inv_df.index[inv_df.apply(lambda x: f"{x['name']} | {x['brand']} | {x['warehouse']}", axis=1) == item_to_manage][0]
+            item = inv_df.iloc[idx]
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                new_qty = st.number_input("تعديل الكمية يدوياً إلى:", value=int(item['quantity']))
+                if st.button("تحديث الكمية ✅"):
+                    supabase.table("inventory").update({"quantity": new_qty}).eq("id", item['id']).execute()
+                    st.success("تم التحديث")
+                    st.rerun()
+            
+            with c2:
+                st.write("🗑️ حذف السجل")
+                if st.button("حذف الصنف نهائياً ❌"):
+                    supabase.table("inventory").delete().eq("id", item['id']).execute()
+                    st.warning("تم الحذف من القاعدة")
+                    st.rerun()
+        else:
+            st.info("لا توجد بيانات لإدارتها.")
