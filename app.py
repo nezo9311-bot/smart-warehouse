@@ -37,14 +37,21 @@ def send_telegram(msg):
     except: pass
 
 # =========================
-# 2. بناء قائمة المخازن
+# 2. بناء قائمة المخازن (حل جذري لخطأ lower)
 # =========================
 inv_df = get_data("inventory")
 default_warehouses = ["مخزن البخاري", "مخزن الجديد"]
 
 if not inv_df.empty and 'warehouse' in inv_df.columns:
-    temp_series = inv_df['warehouse'].astype(str)
-    db_whs = [x for x in temp_series.unique() if x.lower() not in ['nan', 'none', '', 'null']]
+    # الحصول على القيم الفريدة
+    unique_vals = inv_df['warehouse'].unique()
+    # تنظيف القائمة: تحويل كل قيمة لنص ثم التحقق منها
+    db_whs = []
+    for x in unique_vals:
+        x_str = str(x).strip() # تحويل لأي قيمة لنص فوراً
+        if x_str.lower() not in ['nan', 'none', '', 'null']:
+            db_whs.append(x_str)
+    
     wh_list = sorted(list(set(default_warehouses + db_whs)))
 else:
     wh_list = default_warehouses
@@ -63,43 +70,33 @@ with tab1:
         inv_df['warehouse'] = inv_df['warehouse'].astype(str)
         disp = inv_df[inv_df['warehouse'] == sel_wh]
         if not disp.empty:
-            # عرض الاسم والماركة والكمية لتمييزهم
             st.table(disp[['name', 'brand', 'quantity']])
         else:
             st.info(f"المخزن {sel_wh} لا يحتوي على بضائع حالياً.")
 
-# --- التبويب 2: التوريد (التعديل الجذري هنا) ---
+# --- التبويب 2: التوريد (فصل الأصناف حسب الماركة) ---
 with tab2:
     st.subheader("إضافة بضاعة")
     with st.form("in_form", clear_on_submit=True):
         t_wh = st.selectbox("إلى مخزن:", wh_list)
-        n = st.text_input("اسم الصنف (مثل: سكر)")
-        b = st.text_input("الماركة (مثل: كنانة)")
+        n = st.text_input("اسم الصنف")
+        b = st.text_input("الماركة")
         q = st.number_input("الكمية الموردة", min_value=1)
         
         if st.form_submit_button("حفظ التوريد ✅"):
             if n and b:
-                # التحقق بوجود الاسم والماركة والمخزن معاً
+                # البحث عن تطابق (اسم + ماركة + مخزن)
                 match = supabase.table("inventory").select("*")\
-                    .eq("name", n)\
-                    .eq("brand", b)\
-                    .eq("warehouse", t_wh).execute()
+                    .eq("name", n).eq("brand", b).eq("warehouse", t_wh).execute()
                 
                 if match.data:
-                    # إذا وجد نفس الاسم ونفس الماركة في نفس المخزن -> نحدث الكمية
                     new_q = int(match.data[0]['quantity'] + q)
                     supabase.table("inventory").update({"quantity": new_q}).eq("id", match.data[0]['id']).execute()
                 else:
-                    # إذا اختلف الاسم أو الماركة أو المخزن -> ننشئ سجلاً جديداً
-                    supabase.table("inventory").insert({
-                        "name": n, 
-                        "brand": b, 
-                        "quantity": q, 
-                        "warehouse": t_wh
-                    }).execute()
+                    supabase.table("inventory").insert({"name": n, "brand": b, "quantity": q, "warehouse": t_wh}).execute()
                 
                 send_telegram(f"📥 توريد: {n} ({b}) لـ {t_wh}")
-                st.success(f"تم حفظ {n} ماركة {b} بنجاح!")
+                st.success(f"تم الحفظ!")
                 st.rerun()
 
 # --- التبويب 3: الصرف ---
@@ -112,27 +109,20 @@ with tab3:
         
         if not items.empty:
             with st.form("out_form"):
-                # اختيار الصنف + الماركة معاً لضمان الدقة في الصرف
                 item_options = items.apply(lambda x: f"{x['name']} ({x['brand']})", axis=1).tolist()
                 sel_item_full = st.selectbox("اختر الصنف والماركة", item_options)
-                
                 q_o = st.number_input("الكمية", min_value=1)
                 dst = st.text_input("الجهة المستلمة")
                 
                 if st.form_submit_button("تأكيد الصرف"):
-                    # استخراج الاسم والماركة من الخيار المختار
                     sel_idx = item_options.index(sel_item_full)
                     row = items.iloc[sel_idx]
-                    
                     if row['quantity'] >= q_o:
                         supabase.table("inventory").update({"quantity": int(row['quantity'] - q_o)}).eq("id", row['id']).execute()
                         send_telegram(f"📤 صرف: {row['name']} ({row['brand']}) من {source_wh}")
                         st.success("تم الصرف بنجاح")
                         st.rerun()
-                    else:
-                        st.error("الكمية غير كافية!")
-        else:
-            st.warning("لا توجد بضاعة في هذا المخزن.")
+        else: st.warning("المخزن فارغ.")
 
 # --- التبويب 4: الإدارة ---
 with tab4:
@@ -140,11 +130,9 @@ with tab4:
     if st.text_input("كلمة السر", type="password") == ADMIN_PASSWORD:
         if not inv_df.empty:
             inv_df['warehouse'] = inv_df['warehouse'].astype(str)
-            item_manage = st.selectbox("اختر صنفاً (الاسم والماركة والمخزن)", 
+            item_manage = st.selectbox("اختر صنفاً للحذف", 
                                       inv_df.apply(lambda x: f"{x['name']} | {x['brand']} | {x['warehouse']}", axis=1))
-            
             idx = inv_df.index[inv_df.apply(lambda x: f"{x['name']} | {x['brand']} | {x['warehouse']}", axis=1) == item_manage][0]
             if st.button("حذف نهائي ❌"):
                 supabase.table("inventory").delete().eq("id", inv_df.iloc[idx]['id']).execute()
-                st.success("تم الحذف")
                 st.rerun()
