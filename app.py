@@ -427,4 +427,4 @@ with tab4:
                             save_transaction("حذف", str(item['name']), str(item['brand']), int(item['quantity']), del_warehouse, "حذف من النظام")
                             send_telegram_delete(str(item['name']), str(item['brand']), int(item['quantity']), del_warehouse)
                             supabase.table("inventory").delete().eq("id", item['id']).execute()
-                            st.success(f"تم حذف {item['name']} ({item['brand']})")
+                            st.success(f"تم حذف {item['name']} ({item['brand']})"}
