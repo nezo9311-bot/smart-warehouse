@@ -1,10 +1,13 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
-from datetime import datetime
+from datetime import datetime, time
 import requests
 import os
 import numpy as np
+import pytz
+import threading
+import time as time_module
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -86,12 +89,155 @@ def save_transaction(trans_type, item_name, brand, quantity, warehouse, destinat
     except:
         return False
 
-def send_telegram(msg):
+def send_telegram_message(message):
+    """إرسال رسالة للتليجرام"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg}, timeout=5)
+        requests.post(url, data={"chat_id": CHAT_ID, "text": message}, timeout=5)
     except:
         pass
+
+def send_telegram_supply(item_name, brand, quantity, warehouse, notes=""):
+    """إرسال إشعار توريد بتنسيق جميل"""
+    message = f"""📥 توريد جديد:
+📦 الصنف: {item_name}
+🏷️ الماركة: {brand}
+🏢 المخزن: {warehouse}
+🔢 الكمية: {quantity}"""
+    
+    if notes:
+        message += f"\n📝 ملاحظات: {notes}"
+    
+    send_telegram_message(message)
+
+def send_telegram_withdraw(item_name, brand, quantity, warehouse, destination):
+    """إرسال إشعار صرف بتنسيق جميل"""
+    message = f"""📤 صرف:
+📦 الصنف: {item_name}
+🏷️ الماركة: {brand}
+🏢 من مخزن: {warehouse}
+👤 الجهة: {destination}
+🔢 الكمية: {quantity}"""
+    
+    send_telegram_message(message)
+
+def send_telegram_delete(item_name, brand, quantity, warehouse):
+    """إرسال إشعار حذف بتنسيق جميل"""
+    message = f"""🗑️ حذف صنف:
+📦 الصنف: {item_name}
+🏷️ الماركة: {brand}
+🏢 المخزن: {warehouse}
+🔢 الكمية المحذوفة: {quantity}"""
+    
+    send_telegram_message(message)
+
+def send_daily_report():
+    """إرسال التقرير اليومي"""
+    try:
+        # حساب تاريخ اليوم
+        khartoum_tz = pytz.timezone('Africa/Khartoum')
+        now = datetime.now(khartoum_tz)
+        today = now.strftime('%Y-%m-%d')
+        yesterday = (now - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # جلب تحركات اليوم
+        today_transactions = get_transactions(date=today)
+        
+        # جلب تحركات أمس للمقارنة
+        yesterday_transactions = get_transactions(date=yesterday)
+        
+        # إحصائيات اليوم
+        supply_count = len(today_transactions[today_transactions['type'] == 'توريد']) if not today_transactions.empty else 0
+        withdraw_count = len(today_transactions[today_transactions['type'] == 'صرف']) if not today_transactions.empty else 0
+        delete_count = len(today_transactions[today_transactions['type'] == 'حذف']) if not today_transactions.empty else 0
+        
+        # كميات اليوم
+        supply_qty = today_transactions[today_transactions['type'] == 'توريد']['quantity'].sum() if not today_transactions.empty and 'type' in today_transactions.columns else 0
+        withdraw_qty = today_transactions[today_transactions['type'] == 'صرف']['quantity'].sum() if not today_transactions.empty and 'type' in today_transactions.columns else 0
+        
+        # إحصائيات أمس
+        yesterday_supply = len(yesterday_transactions[yesterday_transactions['type'] == 'توريد']) if not yesterday_transactions.empty else 0
+        yesterday_withdraw = len(yesterday_transactions[yesterday_transactions['type'] == 'صرف']) if not yesterday_transactions.empty else 0
+        
+        # المخزون الحالي
+        inv_df = get_data("inventory")
+        total_items = len(inv_df) if not inv_df.empty else 0
+        total_quantity = inv_df['quantity'].sum() if not inv_df.empty else 0
+        
+        # بناء الرسالة
+        message = f"""📊 التقرير اليومي - {today}
+        
+📥 التوريدات:
+🔹 عدد العمليات: {supply_count}
+🔹 الكمية الإجمالية: {int(supply_qty)}
+
+📤 الصرفيات:
+🔹 عدد العمليات: {withdraw_count}
+🔹 الكمية الإجمالية: {int(withdraw_qty)}
+
+🗑️ المحذوفات: {delete_count}
+
+📦 المخزون الحالي:
+🔹 عدد الأصناف: {total_items}
+🔹 الكمية الإجمالية: {int(total_quantity)}
+
+📊 مقارنة مع أمس:
+🔹 توريدات أمس: {yesterday_supply}
+🔹 صرفيات أمس: {yesterday_withdraw}"""
+
+        # إضافة تفاصيل التوريدات
+        if supply_count > 0:
+            message += "\n\n📋 تفاصيل التوريدات:"
+            supplies = today_transactions[today_transactions['type'] == 'توريد']
+            for _, row in supplies.iterrows():
+                message += f"\n• {row['item_name']} ({row['brand']}) - {int(row['quantity'])} - {row['warehouse']}"
+        
+        # إضافة تفاصيل الصرفيات
+        if withdraw_count > 0:
+            message += "\n\n📋 تفاصيل الصرفيات:"
+            withdraws = today_transactions[today_transactions['type'] == 'صرف']
+            for _, row in withdraws.iterrows():
+                message += f"\n• {row['item_name']} ({row['brand']}) - {int(row['quantity'])} - إلى: {row.get('destination', 'غير محدد')}"
+        
+        send_telegram_message(message)
+        return True
+    except Exception as e:
+        print(f"Error sending daily report: {str(e)}")
+        return False
+
+def daily_report_scheduler():
+    """مجدول إرسال التقرير اليومي الساعة 6 مساء بتوقيت الخرطوم"""
+    khartoum_tz = pytz.timezone('Africa/Khartoum')
+    
+    while True:
+        now = datetime.now(khartoum_tz)
+        target_time = now.replace(hour=18, minute=0, second=0, microsecond=0)
+        
+        if now > target_time:
+            target_time = target_time + pd.Timedelta(days=1)
+        
+        sleep_seconds = (target_time - now).total_seconds()
+        time_module.sleep(sleep_seconds)
+        
+        # إرسال التقرير
+        send_daily_report()
+        
+        # انتظار دقيقة لتجنب الإرسال المتكرر
+        time_module.sleep(60)
+
+# بدء المجدول في خلفية منفصلة
+@st.cache_resource
+def start_scheduler():
+    """بدء جدولة التقرير اليومي"""
+    scheduler_thread = threading.Thread(target=daily_report_scheduler, daemon=True)
+    scheduler_thread.start()
+    return True
+
+# بدء المجدول
+try:
+    start_scheduler()
+except:
+    pass
 
 def build_warehouse_list():
     default_warehouses = ["مخزن البخاري", "مخزن الجديد"]
@@ -133,6 +279,14 @@ if not inv_df.empty:
         st.sidebar.metric("إجمالي الكميات", int(total_qty))
     except:
         pass
+
+# زر إرسال التقرير يدوياً
+if st.sidebar.button("📊 إرسال تقرير يومي الآن", use_container_width=True):
+    with st.spinner("جاري إرسال التقرير..."):
+        if send_daily_report():
+            st.sidebar.success("تم إرسال التقرير!")
+        else:
+            st.sidebar.error("فشل في إرسال التقرير")
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "جرد المخازن",
@@ -201,7 +355,6 @@ with tab2:
                 else:
                     with st.spinner("جاري الحفظ..."):
                         try:
-                            # البحث بدقة: نفس الاسم + نفس الماركة + نفس المخزن
                             existing = supabase.table("inventory").select("*")\
                                 .eq("name", n)\
                                 .eq("brand", b)\
@@ -209,17 +362,15 @@ with tab2:
                                 .execute()
                             
                             if existing.data and len(existing.data) > 0:
-                                # تحديث الكمية للصنف الموجود
                                 old_qty = int(existing.data[0]['quantity'])
                                 new_qty = old_qty + q
                                 supabase.table("inventory").update({"quantity": new_qty})\
                                     .eq("id", existing.data[0]['id']).execute()
                                 
                                 save_transaction("توريد", n, b, q, t_wh)
-                                send_telegram(f"توريد (تحديث): {n} ({b}) +{q} = {new_qty} - المخزن: {t_wh}")
+                                send_telegram_supply(n, b, q, t_wh, notes)
                                 st.success(f"تم تحديث الكمية: {n} ({b}) - الكمية الجديدة: {new_qty}")
                             else:
-                                # إضافة صنف جديد
                                 supabase.table("inventory").insert({
                                     "name": n,
                                     "brand": b,
@@ -228,12 +379,8 @@ with tab2:
                                 }).execute()
                                 
                                 save_transaction("توريد", n, b, q, t_wh)
-                                send_telegram(f"توريد (جديد): {n} ({b}) - الكمية: {q} - المخزن: {t_wh}")
+                                send_telegram_supply(n, b, q, t_wh, notes)
                                 st.success(f"تم إضافة صنف جديد: {n} ({b}) - الكمية: {q}")
-                            
-                            if notes:
-                                note_text = f" | ملاحظات: {notes}"
-                                send_telegram(note_text)
                             
                             st.cache_resource.clear()
                             st.rerun()
@@ -267,8 +414,9 @@ with tab3:
                         sel_item_full = None
                 with col2:
                     dst = st.text_input("الجهة المستلمة *", key="withdraw_dest")
-                    reason = st.text_area("سبب الصرف (اختياري)", key="withdraw_reason")
+                
                 submitted = st.form_submit_button("تأكيد الصرف", use_container_width=True)
+                
                 if submitted and sel_item_full:
                     if not dst:
                         st.error("الرجاء إدخال الجهة المستلمة")
@@ -285,11 +433,8 @@ with tab3:
                                         .eq("id", row['id']).execute()
                                     save_transaction("صرف", str(row['name']), str(row['brand']),
                                                    q_o, source_wh, dst.strip())
-                                    reason_text = f" | السبب: {reason}" if reason else ""
-                                    send_telegram(
-                                        f"صرف: {row['name']} ({row['brand']}) - "
-                                        f"الكمية: {q_o} - من: {source_wh} - إلى: {dst}{reason_text}"
-                                    )
+                                    send_telegram_withdraw(str(row['name']), str(row['brand']), 
+                                                         q_o, source_wh, dst.strip())
                                     st.success(f"تم صرف {q_o} من {row['name']} إلى {dst}")
                                     st.cache_resource.clear()
                                     st.rerun()
@@ -351,52 +496,3 @@ with tab4:
                     label="تحميل السجل (CSV)",
                     data=csv,
                     file_name=f"transactions_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-            else:
-                st.info("لا توجد نتائج مطابقة للفلترة")
-        else:
-            st.info("لا توجد تحركات مسجلة بعد")
-    
-    with admin_tab2:
-        st.subheader("حذف الأصناف")
-        st.warning("تنبيه: الحذف نهائي!")
-        if not inv_df.empty and wh_list:
-            del_warehouse = st.selectbox("اختر المخزن", wh_list, key="delete_warehouse")
-            del_items = inv_df[inv_df['warehouse'] == del_warehouse]
-            if not del_items.empty:
-                delete_options = []
-                for idx, row in del_items.iterrows():
-                    try:
-                        option = f"{row['name']} | {row['brand']} | الكمية: {row['quantity']}"
-                        delete_options.append(option)
-                    except:
-                        continue
-                if delete_options:
-                    item_to_delete = st.selectbox("اختر الصنف للحذف", delete_options, key="delete_item")
-                    if st.button("حذف نهائي", type="primary", use_container_width=True):
-                        try:
-                            idx = delete_options.index(item_to_delete)
-                            item = del_items.iloc[idx]
-                            save_transaction("حذف", str(item['name']), str(item['brand']),
-                                           int(item['quantity']), del_warehouse, "حذف من النظام")
-                            supabase.table("inventory").delete().eq("id", item['id']).execute()
-                            st.success(f"تم حذف {item['name']} ({item['brand']})")
-                            st.cache_resource.clear()
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"حدث خطأ: {str(e)}")
-                else:
-                    st.info("لا توجد خيارات متاحة للحذف")
-            else:
-                st.info(f"المخزن {del_warehouse} فارغ")
-        else:
-            st.info("لا توجد أصناف للحذف")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown(f"اخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-if st.sidebar.button("تحديث البيانات", use_container_width=True):
-    st.cache_resource.clear()
-    st.rerun()
