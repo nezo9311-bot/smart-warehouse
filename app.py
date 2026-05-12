@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
-from datetime import datetime, time
+from datetime import datetime
 import requests
 import os
 import numpy as np
@@ -34,67 +34,51 @@ def clean_warehouse_value(value):
         if cleaned.lower() in ['nan', 'none', 'null', '', 'unknown', 'nat']:
             return None
         return cleaned
-    try:
-        cleaned = str(value).strip()
-        if cleaned.lower() in ['nan', 'none', 'null', '', 'unknown', 'nat']:
-            return None
-        return cleaned
-    except:
+    cleaned = str(value).strip()
+    if cleaned.lower() in ['nan', 'none', 'null', '', 'unknown', 'nat']:
         return None
+    return cleaned
 
 def get_data(table):
-    try:
-        res = supabase.table(table).select("*").execute()
-        if not res.data:
-            return pd.DataFrame()
-        df = pd.DataFrame(res.data)
-        if not df.empty and 'warehouse' in df.columns:
-            df['warehouse'] = df['warehouse'].apply(clean_warehouse_value)
-            df = df.dropna(subset=['warehouse'])
-        if not df.empty and 'quantity' in df.columns:
-            df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
-        return df
-    except Exception as e:
-        st.error(f"Error: {str(e)}")
+    res = supabase.table(table).select("*").execute()
+    if not res.data:
         return pd.DataFrame()
+    df = pd.DataFrame(res.data)
+    if not df.empty and 'warehouse' in df.columns:
+        df['warehouse'] = df['warehouse'].apply(clean_warehouse_value)
+        df = df.dropna(subset=['warehouse'])
+    if not df.empty and 'quantity' in df.columns:
+        df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
+    return df
 
 def get_transactions(warehouse=None, date=None):
-    try:
-        query = supabase.table("transactions").select("*")
-        if warehouse and warehouse != "all":
-            query = query.eq("warehouse", warehouse)
-        if date:
-            query = query.gte("created_at", f"{date}T00:00:00")
-            query = query.lte("created_at", f"{date}T23:59:59")
-        res = query.order("created_at", desc=True).execute()
-        if not res.data:
-            return pd.DataFrame()
-        return pd.DataFrame(res.data)
-    except:
+    query = supabase.table("transactions").select("*")
+    if warehouse and warehouse != "all":
+        query = query.eq("warehouse", warehouse)
+    if date:
+        query = query.gte("created_at", f"{date}T00:00:00")
+        query = query.lte("created_at", f"{date}T23:59:59")
+    res = query.order("created_at", desc=True).execute()
+    if not res.data:
         return pd.DataFrame()
+    return pd.DataFrame(res.data)
 
 def save_transaction(trans_type, item_name, brand, quantity, warehouse, destination=None):
-    try:
-        data = {
-            "type": str(trans_type),
-            "item_name": str(item_name),
-            "brand": str(brand),
-            "quantity": int(quantity),
-            "warehouse": str(warehouse),
-            "destination": str(destination) if destination else "",
-            "created_at": datetime.now().isoformat()
-        }
-        supabase.table("transactions").insert(data).execute()
-        return True
-    except:
-        return False
+    data = {
+        "type": str(trans_type),
+        "item_name": str(item_name),
+        "brand": str(brand),
+        "quantity": int(quantity),
+        "warehouse": str(warehouse),
+        "destination": str(destination) if destination else "",
+        "created_at": datetime.now().isoformat()
+    }
+    supabase.table("transactions").insert(data).execute()
+    return True
 
 def send_telegram_message(message):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": message}, timeout=5)
-    except:
-        pass
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": CHAT_ID, "text": message}, timeout=5)
 
 def send_telegram_supply(item_name, brand, quantity, warehouse, notes=""):
     message = f"📥 توريد جديد:\n📦 الصنف: {item_name}\n🏷️ الماركة: {brand}\n🏢 المخزن: {warehouse}\n🔢 الكمية: {quantity}"
@@ -111,53 +95,49 @@ def send_telegram_delete(item_name, brand, quantity, warehouse):
     send_telegram_message(message)
 
 def send_daily_report():
-    try:
-        khartoum_tz = pytz.timezone('Africa/Khartoum')
-        now = datetime.now(khartoum_tz)
-        today = now.strftime('%Y-%m-%d')
-        yesterday = (now - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-        
-        today_transactions = get_transactions(date=today)
-        yesterday_transactions = get_transactions(date=yesterday)
-        
-        supply_count = len(today_transactions[today_transactions['type'] == 'توريد']) if not today_transactions.empty else 0
-        withdraw_count = len(today_transactions[today_transactions['type'] == 'صرف']) if not today_transactions.empty else 0
-        delete_count = len(today_transactions[today_transactions['type'] == 'حذف']) if not today_transactions.empty else 0
-        
-        supply_qty = today_transactions[today_transactions['type'] == 'توريد']['quantity'].sum() if not today_transactions.empty else 0
-        withdraw_qty = today_transactions[today_transactions['type'] == 'صرف']['quantity'].sum() if not today_transactions.empty else 0
-        
-        yesterday_supply = len(yesterday_transactions[yesterday_transactions['type'] == 'توريد']) if not yesterday_transactions.empty else 0
-        yesterday_withdraw = len(yesterday_transactions[yesterday_transactions['type'] == 'صرف']) if not yesterday_transactions.empty else 0
-        
-        inv_df = get_data("inventory")
-        total_items = len(inv_df) if not inv_df.empty else 0
-        total_quantity = inv_df['quantity'].sum() if not inv_df.empty else 0
-        
-        message = f"📊 التقرير اليومي - {today}\n\n"
-        message += f"📥 التوريدات:\n🔹 عدد العمليات: {supply_count}\n🔹 الكمية الإجمالية: {int(supply_qty)}\n\n"
-        message += f"📤 الصرفيات:\n🔹 عدد العمليات: {withdraw_count}\n🔹 الكمية الإجمالية: {int(withdraw_qty)}\n\n"
-        message += f"🗑️ المحذوفات: {delete_count}\n\n"
-        message += f"📦 المخزون الحالي:\n🔹 عدد الأصناف: {total_items}\n🔹 الكمية الإجمالية: {int(total_quantity)}\n\n"
-        message += f"📊 مقارنة مع أمس:\n🔹 توريدات أمس: {yesterday_supply}\n🔹 صرفيات أمس: {yesterday_withdraw}"
+    khartoum_tz = pytz.timezone('Africa/Khartoum')
+    now = datetime.now(khartoum_tz)
+    today = now.strftime('%Y-%m-%d')
+    yesterday = (now - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    today_transactions = get_transactions(date=today)
+    yesterday_transactions = get_transactions(date=yesterday)
+    
+    supply_count = len(today_transactions[today_transactions['type'] == 'توريد']) if not today_transactions.empty else 0
+    withdraw_count = len(today_transactions[today_transactions['type'] == 'صرف']) if not today_transactions.empty else 0
+    delete_count = len(today_transactions[today_transactions['type'] == 'حذف']) if not today_transactions.empty else 0
+    
+    supply_qty = today_transactions[today_transactions['type'] == 'توريد']['quantity'].sum() if not today_transactions.empty else 0
+    withdraw_qty = today_transactions[today_transactions['type'] == 'صرف']['quantity'].sum() if not today_transactions.empty else 0
+    
+    yesterday_supply = len(yesterday_transactions[yesterday_transactions['type'] == 'توريد']) if not yesterday_transactions.empty else 0
+    yesterday_withdraw = len(yesterday_transactions[yesterday_transactions['type'] == 'صرف']) if not yesterday_transactions.empty else 0
+    
+    inv_df = get_data("inventory")
+    total_items = len(inv_df) if not inv_df.empty else 0
+    total_quantity = inv_df['quantity'].sum() if not inv_df.empty else 0
+    
+    message = f"📊 التقرير اليومي - {today}\n\n"
+    message += f"📥 التوريدات:\n🔹 عدد العمليات: {supply_count}\n🔹 الكمية الإجمالية: {int(supply_qty)}\n\n"
+    message += f"📤 الصرفيات:\n🔹 عدد العمليات: {withdraw_count}\n🔹 الكمية الإجمالية: {int(withdraw_qty)}\n\n"
+    message += f"🗑️ المحذوفات: {delete_count}\n\n"
+    message += f"📦 المخزون الحالي:\n🔹 عدد الأصناف: {total_items}\n🔹 الكمية الإجمالية: {int(total_quantity)}\n\n"
+    message += f"📊 مقارنة مع أمس:\n🔹 توريدات أمس: {yesterday_supply}\n🔹 صرفيات أمس: {yesterday_withdraw}"
 
-        if supply_count > 0:
-            message += "\n📋 تفاصيل التوريدات:"
-            supplies = today_transactions[today_transactions['type'] == 'توريد']
-            for _, row in supplies.iterrows():
-                message += f"\n• {row['item_name']} ({row['brand']}) - {int(row['quantity'])} - {row['warehouse']}"
-        
-        if withdraw_count > 0:
-            message += "\n\n📋 تفاصيل الصرفيات:"
-            withdraws = today_transactions[today_transactions['type'] == 'صرف']
-            for _, row in withdraws.iterrows():
-                message += f"\n• {row['item_name']} ({row['brand']}) - {int(row['quantity'])} - إلى: {row.get('destination', 'غير محدد')}"
-        
-        send_telegram_message(message)
-        return True
-    except Exception as e:
-        print(f"Error sending daily report: {str(e)}")
-        return False
+    if supply_count > 0:
+        message += "\n📋 تفاصيل التوريدات:"
+        supplies = today_transactions[today_transactions['type'] == 'توريد']
+        for _, row in supplies.iterrows():
+            message += f"\n• {row['item_name']} ({row['brand']}) - {int(row['quantity'])} - {row['warehouse']}"
+    
+    if withdraw_count > 0:
+        message += "\n\n📋 تفاصيل الصرفيات:"
+        withdraws = today_transactions[today_transactions['type'] == 'صرف']
+        for _, row in withdraws.iterrows():
+            message += f"\n• {row['item_name']} ({row['brand']}) - {int(row['quantity'])} - إلى: {row.get('destination', 'غير محدد')}"
+    
+    send_telegram_message(message)
+    return True
 
 def daily_report_scheduler():
     khartoum_tz = pytz.timezone('Africa/Khartoum')
