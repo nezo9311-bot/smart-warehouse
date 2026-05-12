@@ -495,4 +495,4 @@ with tab4:
                 st.download_button(
                     label="تحميل السجل (CSV)",
                     data=csv,
-                    file_name=f"transactions_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                    file_name=f"transactions_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
