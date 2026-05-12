@@ -90,7 +90,6 @@ def save_transaction(trans_type, item_name, brand, quantity, warehouse, destinat
         return False
 
 def send_telegram_message(message):
-    """إرسال رسالة للتليجرام"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": CHAT_ID, "text": message}, timeout=5)
@@ -98,7 +97,6 @@ def send_telegram_message(message):
         pass
 
 def send_telegram_supply(item_name, brand, quantity, warehouse, notes=""):
-    """إرسال إشعار توريد بتنسيق جميل"""
     message = f"""📥 توريد جديد:
 📦 الصنف: {item_name}
 🏷️ الماركة: {brand}
@@ -111,7 +109,6 @@ def send_telegram_supply(item_name, brand, quantity, warehouse, notes=""):
     send_telegram_message(message)
 
 def send_telegram_withdraw(item_name, brand, quantity, warehouse, destination):
-    """إرسال إشعار صرف بتنسيق جميل"""
     message = f"""📤 صرف:
 📦 الصنف: {item_name}
 🏷️ الماركة: {brand}
@@ -122,7 +119,6 @@ def send_telegram_withdraw(item_name, brand, quantity, warehouse, destination):
     send_telegram_message(message)
 
 def send_telegram_delete(item_name, brand, quantity, warehouse):
-    """إرسال إشعار حذف بتنسيق جميل"""
     message = f"""🗑️ حذف صنف:
 📦 الصنف: {item_name}
 🏷️ الماركة: {brand}
@@ -132,39 +128,29 @@ def send_telegram_delete(item_name, brand, quantity, warehouse):
     send_telegram_message(message)
 
 def send_daily_report():
-    """إرسال التقرير اليومي"""
     try:
-        # حساب تاريخ اليوم
         khartoum_tz = pytz.timezone('Africa/Khartoum')
         now = datetime.now(khartoum_tz)
         today = now.strftime('%Y-%m-%d')
         yesterday = (now - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
         
-        # جلب تحركات اليوم
         today_transactions = get_transactions(date=today)
-        
-        # جلب تحركات أمس للمقارنة
         yesterday_transactions = get_transactions(date=yesterday)
         
-        # إحصائيات اليوم
         supply_count = len(today_transactions[today_transactions['type'] == 'توريد']) if not today_transactions.empty else 0
         withdraw_count = len(today_transactions[today_transactions['type'] == 'صرف']) if not today_transactions.empty else 0
         delete_count = len(today_transactions[today_transactions['type'] == 'حذف']) if not today_transactions.empty else 0
         
-        # كميات اليوم
-        supply_qty = today_transactions[today_transactions['type'] == 'توريد']['quantity'].sum() if not today_transactions.empty and 'type' in today_transactions.columns else 0
-        withdraw_qty = today_transactions[today_transactions['type'] == 'صرف']['quantity'].sum() if not today_transactions.empty and 'type' in today_transactions.columns else 0
+        supply_qty = today_transactions[today_transactions['type'] == 'توريد']['quantity'].sum() if not today_transactions.empty else 0
+        withdraw_qty = today_transactions[today_transactions['type'] == 'صرف']['quantity'].sum() if not today_transactions.empty else 0
         
-        # إحصائيات أمس
         yesterday_supply = len(yesterday_transactions[yesterday_transactions['type'] == 'توريد']) if not yesterday_transactions.empty else 0
         yesterday_withdraw = len(yesterday_transactions[yesterday_transactions['type'] == 'صرف']) if not yesterday_transactions.empty else 0
         
-        # المخزون الحالي
         inv_df = get_data("inventory")
         total_items = len(inv_df) if not inv_df.empty else 0
         total_quantity = inv_df['quantity'].sum() if not inv_df.empty else 0
         
-        # بناء الرسالة
         message = f"""📊 التقرير اليومي - {today}
         
 📥 التوريدات:
@@ -185,14 +171,12 @@ def send_daily_report():
 🔹 توريدات أمس: {yesterday_supply}
 🔹 صرفيات أمس: {yesterday_withdraw}"""
 
-        # إضافة تفاصيل التوريدات
         if supply_count > 0:
             message += "\n\n📋 تفاصيل التوريدات:"
             supplies = today_transactions[today_transactions['type'] == 'توريد']
             for _, row in supplies.iterrows():
                 message += f"\n• {row['item_name']} ({row['brand']}) - {int(row['quantity'])} - {row['warehouse']}"
         
-        # إضافة تفاصيل الصرفيات
         if withdraw_count > 0:
             message += "\n\n📋 تفاصيل الصرفيات:"
             withdraws = today_transactions[today_transactions['type'] == 'صرف']
@@ -206,7 +190,6 @@ def send_daily_report():
         return False
 
 def daily_report_scheduler():
-    """مجدول إرسال التقرير اليومي الساعة 6 مساء بتوقيت الخرطوم"""
     khartoum_tz = pytz.timezone('Africa/Khartoum')
     
     while True:
@@ -218,22 +201,15 @@ def daily_report_scheduler():
         
         sleep_seconds = (target_time - now).total_seconds()
         time_module.sleep(sleep_seconds)
-        
-        # إرسال التقرير
         send_daily_report()
-        
-        # انتظار دقيقة لتجنب الإرسال المتكرر
         time_module.sleep(60)
 
-# بدء المجدول في خلفية منفصلة
 @st.cache_resource
 def start_scheduler():
-    """بدء جدولة التقرير اليومي"""
     scheduler_thread = threading.Thread(target=daily_report_scheduler, daemon=True)
     scheduler_thread.start()
     return True
 
-# بدء المجدول
 try:
     start_scheduler()
 except:
@@ -280,7 +256,6 @@ if not inv_df.empty:
     except:
         pass
 
-# زر إرسال التقرير يدوياً
 if st.sidebar.button("📊 إرسال تقرير يومي الآن", use_container_width=True):
     with st.spinner("جاري إرسال التقرير..."):
         if send_daily_report():
@@ -295,6 +270,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "سجل التحركات والإدارة"
 ])
 
+# Tab 1: Inventory
 with tab1:
     st.header("جرد المخازن")
     col1, col2 = st.columns([2, 1])
@@ -334,6 +310,7 @@ with tab1:
     else:
         st.info("اختر مخزناً لعرض محتوياته")
 
+# Tab 2: Supply
 with tab2:
     st.header("توريد بضاعة")
     if wh_list:
@@ -390,6 +367,7 @@ with tab2:
     else:
         st.warning("لا توجد مخازن متاحة")
 
+# Tab 3: Withdraw
 with tab3:
     st.header("صرف بضاعة")
     if not inv_df.empty and wh_list:
@@ -445,6 +423,7 @@ with tab3:
     else:
         st.info("قاعدة البيانات فارغة")
 
+# Tab 4: Transactions & Management
 with tab4:
     st.header("سجل التحركات والإدارة")
     admin_tab1, admin_tab2 = st.tabs(["سجل التحركات", "حذف الأصناف"])
@@ -495,4 +474,23 @@ with tab4:
                 st.download_button(
                     label="تحميل السجل (CSV)",
                     data=csv,
-                    file_name=f"transactions_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+                    file_name=f"transactions_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            else:
+                st.info("لا توجد نتائج مطابقة للفلترة")
+        else:
+            st.info("لا توجد تحركات مسجلة بعد")
+    
+    with admin_tab2:
+        st.subheader("حذف الأصناف")
+        st.warning("تنبيه: الحذف نهائي!")
+        if not inv_df.empty and wh_list:
+            del_warehouse = st.selectbox("اختر المخزن", wh_list, key="delete_warehouse")
+            del_items = inv_df[inv_df['warehouse'] == del_warehouse]
+            if not del_items.empty:
+                delete_options = []
+                for idx, row in del_items.iterrows():
+                    try:
+                    
