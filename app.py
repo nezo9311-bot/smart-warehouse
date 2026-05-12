@@ -37,7 +37,7 @@ def clean_warehouse_value(value):
     
     if isinstance(value, str):
         cleaned = value.strip()
-        if cleaned.lower() in ['nan', 'none', 'null', '', 'unknown', 'nat']:
+        if cleaned.lower() in ['nan', 'none', 'null', '', 'unknown', في 'nat']:
             return None
         return cleaned
     
