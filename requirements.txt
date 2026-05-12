@@ -2,3 +2,4 @@ streamlit
 pandas
 supabase
 requests
+pytz==2024.1
