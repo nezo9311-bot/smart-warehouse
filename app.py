@@ -19,7 +19,6 @@ st.set_page_config(page_title="نظام النذير للمخازن", layout="wi
 @st.cache_resource
 def init_supabase():
     url = SUPABASE_URL.strip()
-    # تنظيف الرابط
     url = url.replace("/rest/v1/", "").replace("/rest/v1", "")
     if url.endswith("/"): 
         url = url[:-1]
@@ -33,18 +32,15 @@ supabase: Client = init_supabase()
 
 def clean_warehouse_value(value):
     """تنظيف قيمة المخزن وتحويلها لنص آمن"""
-    # إذا كانت القيمة مفقودة أو NaN
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return None
     
-    # إذا كانت سلسلة نصية
     if isinstance(value, str):
         cleaned = value.strip()
-        if cleaned.lower() in ['nan', 'none', 'null', '', 'unknown', 'nan', 'nat']:
+        if cleaned.lower() in ['nan', 'none', 'null', '', 'unknown', 'nat']:
             return None
         return cleaned
     
-    # إذا كانت أي نوع آخر
     try:
         cleaned = str(value).strip()
         if cleaned.lower() in ['nan', 'none', 'null', '', 'unknown', 'nat']:
@@ -62,14 +58,10 @@ def get_data(table):
         
         df = pd.DataFrame(res.data)
         
-        # تنظيف عمود warehouse إن وجد
         if not df.empty and 'warehouse' in df.columns:
-            # تحويل كل القيم إلى نصوص آمنة
             df['warehouse'] = df['warehouse'].apply(clean_warehouse_value)
-            # حذف الصفوف التي قيمتها None
             df = df.dropna(subset=['warehouse'])
         
-        # تحويل عمود الكمية إلى رقمي
         if not df.empty and 'quantity' in df.columns:
             df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
         
@@ -131,15 +123,13 @@ def send_telegram(msg):
 # =========================
 
 def build_warehouse_list():
-    """بناء قائمة المخازن بشكل آمن مع معالجة كل الحالات"""
+    """بناء قائمة المخازن بشكل آمن"""
     default_warehouses = ["مخزن البخاري", "مخزن الجديد"]
     db_warehouses = []
     
-    # جلب البيانات
     df = get_data("inventory")
     
     if not df.empty and 'warehouse' in df.columns:
-        # استخراج القيم الفريدة
         unique_values = df['warehouse'].dropna().unique()
         
         for val in unique_values:
@@ -147,11 +137,9 @@ def build_warehouse_list():
             if cleaned:
                 db_warehouses.append(cleaned)
     
-    # دمج القوائم
     all_warehouses = default_warehouses.copy()
     all_warehouses.extend(db_warehouses)
     
-    # إزالة التكرار مع الحفاظ على النوع النصي
     clean_list = []
     seen = set()
     for wh in all_warehouses:
@@ -159,7 +147,6 @@ def build_warehouse_list():
             clean_list.append(wh)
             seen.add(wh)
     
-    # ترتيب القائمة
     try:
         return sorted(clean_list)
     except:
@@ -180,7 +167,7 @@ inv_df = get_data("inventory")
 # =========================
 st.sidebar.title("🏢 مستودعات النذير")
 
-# إحصائيات سريعة في الشريط الجانبي
+# إحصائيات سريعة
 if not inv_df.empty:
     st.sidebar.metric("📦 إجمالي الأصناف", len(inv_df))
     st.sidebar.metric("🏭 عدد المخازن", len(wh_list))
@@ -191,7 +178,7 @@ if not inv_df.empty:
     except:
         pass
 
-# إنشاء التبويبات
+# التبويبات
 tab1, tab2, tab3, tab4 = st.tabs([
     "📊 جرد المخازن", 
     "📥 توريد", 
@@ -216,10 +203,8 @@ with tab1:
         search_term = st.text_input("🔍 بحث عن صنف", key="search_inventory")
     
     if sel_wh and not inv_df.empty:
-        # تصفية حسب المخزن المختار
         disp = inv_df[inv_df['warehouse'] == sel_wh].copy()
         
-        # تطبيق البحث
         if search_term and not disp.empty:
             try:
                 name_match = disp['name'].astype(str).str.contains(search_term, case=False, na=False)
@@ -237,7 +222,6 @@ with tab1:
                 hide_index=True
             )
             
-            # إظهار إجمالي الكميات
             try:
                 total_qty = disp['quantity'].sum()
                 st.info(f"إجمالي الكميات في **{sel_wh}**: **{int(total_qty)}**")
@@ -245,8 +229,8 @@ with tab1:
                 pass
         else:
             st.info(f"لا توجد نتائج في {sel_wh}")
-    elif not inv_df.empty:
-        st.info("قاعدة البيانات فارغة حالياً")
+    else:
+        st.info("اختر مخزناً لعرض محتوياته")
 
 # --- التبويب 2: التوريد ---
 with tab2:
@@ -273,7 +257,6 @@ with tab2:
                 else:
                     with st.spinner("جاري الحفظ..."):
                         try:
-                            # البحث عن تطابق
                             match = supabase.table("inventory").select("*")\
                                 .eq("name", n.strip())\
                                 .eq("brand", b.strip())\
@@ -281,13 +264,11 @@ with tab2:
                                 .execute()
                             
                             if match.data:
-                                # تحديث الكمية
                                 old_qty = int(match.data[0]['quantity'])
                                 new_q = old_qty + q
                                 supabase.table("inventory").update({"quantity": new_q})\
                                     .eq("id", match.data[0]['id']).execute()
                             else:
-                                # إدخال جديد
                                 supabase.table("inventory").insert({
                                     "name": n.strip(), 
                                     "brand": b.strip(), 
@@ -295,16 +276,12 @@ with tab2:
                                     "warehouse": t_wh
                                 }).execute()
                             
-                            # حفظ في سجل التحركات
                             save_transaction("توريد", n.strip(), b.strip(), q, t_wh)
                             
-                            # إرسال إشعار
                             note_text = f" | ملاحظات: {notes}" if notes else ""
                             send_telegram(f"📥 توريد: {n} ({b})\nالكمية: {q}\nإلى: {t_wh}{note_text}")
                             
                             st.success(f"✅ تم توريد {q} من {n} ({b}) إلى {t_wh}")
-                            
-                            # تحديث البيانات
                             st.cache_resource.clear()
                             st.rerun()
                             
@@ -319,8 +296,6 @@ with tab3:
     
     if not inv_df.empty and wh_list:
         source_wh = st.selectbox("اصرف من:", wh_list, key="withdraw_warehouse")
-        
-        # تصفية الأصناف المتاحة في المخزن المختار
         items = inv_df[(inv_df['warehouse'] == source_wh) & (inv_df['quantity'] > 0)]
         
         if not items.empty:
@@ -328,7 +303,6 @@ with tab3:
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    # إنشاء قائمة الخيارات
                     item_options = []
                     for idx, row in items.iterrows():
                         try:
@@ -364,15 +338,12 @@ with tab3:
                                 with st.spinner("جاري الصرف..."):
                                     new_qty = int(row['quantity']) - q_o
                                     
-                                    # تحديث المخزون
                                     supabase.table("inventory").update({"quantity": new_qty})\
                                         .eq("id", row['id']).execute()
                                     
-                                    # حفظ في سجل التحركات
                                     save_transaction("صرف", str(row['name']), str(row['brand']), 
                                                    q_o, source_wh, dst.strip())
                                     
-                                    # إرسال إشعار
                                     reason_text = f" | السبب: {reason}" if reason else ""
                                     send_telegram(
                                         f"📤 صرف: {row['name']} ({row['brand']})\n"
@@ -382,8 +353,6 @@ with tab3:
                                     )
                                     
                                     st.success(f"✅ تم صرف {q_o} من {row['name']} إلى {dst}")
-                                    
-                                    # تحديث البيانات
                                     st.cache_resource.clear()
                                     st.rerun()
                                     
@@ -404,13 +373,13 @@ with tab4:
     with admin_tab1:
         st.subheader("📊 سجل التحركات اليومية")
         
-        # فلترة السجل
         col1, col2, col3 = st.columns([1, 1, 1])
         
         with col1:
+            filter_options = ["الكل"] + wh_list if wh_list else ["الكل"]
             filter_warehouse = st.selectbox(
                 "تصفية حسب المخزن",
-                ["الكل"] + wh_list if wh_list else ["الكل"],
+                filter_options,
                 key="log_warehouse"
             )
         
@@ -428,25 +397,21 @@ with tab4:
                 key="log_type"
             )
         
-        # جلب السجل
         transactions_df = get_transactions(
             warehouse=None if filter_warehouse == "الكل" else filter_warehouse,
             date=filter_date.isoformat() if filter_date else None
         )
         
         if not transactions_df.empty:
-            # تطبيق فلتر النوع
             if filter_type != "الكل":
                 transactions_df = transactions_df[transactions_df['type'] == filter_type]
             
             if not transactions_df.empty:
-                # تنسيق التاريخ والوقت
                 if 'created_at' in transactions_df.columns:
                     transactions_df['created_at'] = pd.to_datetime(transactions_df['created_at'], errors='coerce')
                     transactions_df['التاريخ'] = transactions_df['created_at'].dt.strftime('%Y-%m-%d')
                     transactions_df['الوقت'] = transactions_df['created_at'].dt.strftime('%H:%M:%S')
                 
-                # تحضير بيانات العرض
                 display_df = transactions_df.rename(columns={
                     'type': 'النوع',
                     'item_name': 'الصنف',
@@ -456,12 +421,10 @@ with tab4:
                     'destination': 'الجهة'
                 })
                 
-                # اختيار الأعمدة المتاحة
                 display_columns = ['النوع', 'التاريخ', 'الوقت', 'الصنف', 'الماركة', 
                                  'الكمية', 'المخزن', 'الجهة']
                 available_columns = [col for col in display_columns if col in display_df.columns]
                 
-                # عرض الجدول
                 st.dataframe(
                     display_df[available_columns],
                     use_container_width=True,
@@ -469,7 +432,6 @@ with tab4:
                     height=400
                 )
                 
-                # إحصائيات
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("📥 توريدات", len(transactions_df[transactions_df['type'] == 'توريد']))
@@ -480,7 +442,6 @@ with tab4:
                 with col4:
                     st.metric("📦 الإجمالي", len(transactions_df))
                 
-                # تصدير السجل
                 csv = transactions_df.to_csv(index=False).encode('utf-8-sig')
                 st.download_button(
                     label="📥 تحميل السجل (CSV)",
@@ -509,7 +470,6 @@ with tab4:
             del_items = inv_df[inv_df['warehouse'] == del_warehouse]
             
             if not del_items.empty:
-                # إنشاء قائمة الحذف
                 delete_options = []
                 for idx, row in del_items.iterrows():
                     try:
@@ -530,3 +490,30 @@ with tab4:
                             idx = delete_options.index(item_to_delete)
                             item = del_items.iloc[idx]
                             
+                            save_transaction("حذف", str(item['name']), str(item['brand']), 
+                                           int(item['quantity']), del_warehouse, "حذف من النظام")
+                            
+                            supabase.table("inventory").delete().eq("id", item['id']).execute()
+                            
+                            st.success(f"✅ تم حذف {item['name']} ({item['brand']}) بنجاح")
+                            st.cache_resource.clear()
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"حدث خطأ في الحذف: {str(e)}")
+                else:
+                    st.info("لا توجد خيارات متاحة للحذف")
+            else:
+                st.info(f"المخزن {del_warehouse} فارغ")
+        else:
+            st.info("لا توجد أصناف للحذف")
+
+# =========================
+# 5. تذييل الصفحة
+# =========================
+st.sidebar.markdown("---")
+st.sidebar.markdown(f"🕐 آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+if st.sidebar.button("🔄 تحديث البيانات", use_container_width=True):
+    st.cache_resource.clear()
+    st.rerun()
