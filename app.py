@@ -67,7 +67,7 @@ def get_transactions(warehouse=None, date=None):
         if not res.data:
             return pd.DataFrame()
         return pd.DataFrame(res.data)
-    except Exception as e:
+    except:
         return pd.DataFrame()
 
 def save_transaction(trans_type, item_name, brand, quantity, warehouse, destination=None):
@@ -187,41 +187,57 @@ with tab2:
             col1, col2 = st.columns(2)
             with col1:
                 t_wh = st.selectbox("إلى مخزن:", wh_list, key="supply_warehouse")
-                n = st.text_input("اسم الصنف *", key="supply_name")
-                b = st.text_input("الماركة *", key="supply_brand")
+                n = st.text_input("اسم الصنف *", key="supply_name").strip()
+                b = st.text_input("الماركة *", key="supply_brand").strip()
             with col2:
                 q = st.number_input("الكمية الموردة *", min_value=1, value=1, key="supply_qty")
                 notes = st.text_area("ملاحظات (اختياري)", key="supply_notes")
+            
             submitted = st.form_submit_button("حفظ التوريد", use_container_width=True)
+            
             if submitted:
                 if not n or not b:
                     st.error("الرجاء إدخال اسم الصنف والماركة")
                 else:
                     with st.spinner("جاري الحفظ..."):
                         try:
-                            match = supabase.table("inventory").select("*")\
-                                .eq("name", n.strip())\
-                                .eq("brand", b.strip())\
+                            # البحث بدقة: نفس الاسم + نفس الماركة + نفس المخزن
+                            existing = supabase.table("inventory").select("*")\
+                                .eq("name", n)\
+                                .eq("brand", b)\
                                 .eq("warehouse", t_wh)\
                                 .execute()
-                            if match.data:
-                                old_qty = int(match.data[0]['quantity'])
-                                new_q = old_qty + q
-                                supabase.table("inventory").update({"quantity": new_q})\
-                                    .eq("id", match.data[0]['id']).execute()
+                            
+                            if existing.data and len(existing.data) > 0:
+                                # تحديث الكمية للصنف الموجود
+                                old_qty = int(existing.data[0]['quantity'])
+                                new_qty = old_qty + q
+                                supabase.table("inventory").update({"quantity": new_qty})\
+                                    .eq("id", existing.data[0]['id']).execute()
+                                
+                                save_transaction("توريد", n, b, q, t_wh)
+                                send_telegram(f"توريد (تحديث): {n} ({b}) +{q} = {new_qty} - المخزن: {t_wh}")
+                                st.success(f"تم تحديث الكمية: {n} ({b}) - الكمية الجديدة: {new_qty}")
                             else:
+                                # إضافة صنف جديد
                                 supabase.table("inventory").insert({
-                                    "name": n.strip(),
-                                    "brand": b.strip(),
+                                    "name": n,
+                                    "brand": b,
                                     "quantity": q,
                                     "warehouse": t_wh
                                 }).execute()
-                            save_transaction("توريد", n.strip(), b.strip(), q, t_wh)
-                            note_text = f" | ملاحظات: {notes}" if notes else ""
-                            send_telegram(f"توريد: {n} ({b}) - الكمية: {q} - إلى: {t_wh}{note_text}")
-                            st.success(f"تم توريد {q} من {n} ({b}) إلى {t_wh}")
+                                
+                                save_transaction("توريد", n, b, q, t_wh)
+                                send_telegram(f"توريد (جديد): {n} ({b}) - الكمية: {q} - المخزن: {t_wh}")
+                                st.success(f"تم إضافة صنف جديد: {n} ({b}) - الكمية: {q}")
+                            
+                            if notes:
+                                note_text = f" | ملاحظات: {notes}"
+                                send_telegram(note_text)
+                            
                             st.cache_resource.clear()
                             st.rerun()
+                            
                         except Exception as e:
                             st.error(f"حدث خطأ: {str(e)}")
     else:
