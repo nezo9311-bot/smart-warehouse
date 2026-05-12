@@ -11,8 +11,8 @@ import numpy as np
 # =========================
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_TOKEN = os.getenv("8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM")
+CHAT_ID = os.getenv("5716145319")
 
 st.set_page_config(page_title="نظام النذير للمخازن", layout="wide")
 
@@ -320,7 +320,7 @@ with tab3:
                 
                 with col2:
                     dst = st.text_input("الجهة المستلمة *", key="withdraw_dest")
-                    reason = st.text_area("سبب الصرف (اختياري)", key="withdraw_reason")
+                    reason = st.text_area( ملاحظات(اختياري)", key="withdraw_reason")
                 
                 submitted = st.form_submit_button("✅ تأكيد الصرف", use_container_width=True)
                 
