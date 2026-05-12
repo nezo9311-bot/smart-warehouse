@@ -12,10 +12,13 @@ import time as time_module
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 TELEGRAM_TOKEN = "8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM"
+
+# قائمة المستلمين
 CHAT_IDS = [
     "5716145319",  # الشخص الأول
-    "8703100900",  # الشخص الثاني - ضع الـ Chat ID الصحيح هنا
+    "8703100900",  # الشخص الثاني
 ]
+
 st.set_page_config(page_title="نظام النذير للمخازن", layout="wide")
 
 @st.cache_resource
@@ -79,8 +82,13 @@ def save_transaction(trans_type, item_name, brand, quantity, warehouse, destinat
     return True
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": message}, timeout=5)
+    """إرسال رسالة لجميع المستلمين"""
+    for chat_id in CHAT_IDS:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+            requests.post(url, data={"chat_id": chat_id, "text": message}, timeout=5)
+        except:
+            pass
 
 def send_telegram_supply(item_name, brand, quantity, warehouse, notes=""):
     message = f"📥 توريد جديد:\n📦 الصنف: {item_name}\n🏷️ الماركة: {brand}\n🏢 المخزن: {warehouse}\n🔢 الكمية: {quantity}"
@@ -197,7 +205,7 @@ if not inv_df.empty:
 
 if st.sidebar.button("📊 إرسال تقرير يومي الآن", use_container_width=True):
     if send_daily_report():
-        st.sidebar.success("تم إرسال التقرير!")
+        st.sidebar.success("تم إرسال التقرير للجميع!")
     else:
         st.sidebar.error("فشل في إرسال التقرير")
 
