@@ -31,13 +31,12 @@ supabase: Client = init_supabase()
 # =========================
 
 def clean_warehouse_value(value):
-    """تنظيف قيمة المخزن وتحويلها لنص آمن"""
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return None
     
     if isinstance(value, str):
         cleaned = value.strip()
-        if cleaned.lower() in ['nan', 'none', 'null', '', 'unknown', في 'nat']:
+        if cleaned.lower() in ['nan', 'none', 'null', '', 'unknown', 'nat']:
             return None
         return cleaned
     
@@ -50,7 +49,6 @@ def clean_warehouse_value(value):
         return None
 
 def get_data(table):
-    """جلب وتنظيف البيانات من Supabase"""
     try:
         res = supabase.table(table).select("*").execute()
         if not res.data:
@@ -67,15 +65,14 @@ def get_data(table):
         
         return df
     except Exception as e:
-        st.error(f"خطأ في جلب البيانات: {str(e)}")
+        st.error(f"Error getting data: {str(e)}")
         return pd.DataFrame()
 
 def get_transactions(warehouse=None, date=None):
-    """جلب سجل التحركات مع إمكانية الفلترة"""
     try:
         query = supabase.table("transactions").select("*")
         
-        if warehouse and warehouse != "الكل":
+        if warehouse and warehouse != "all":
             query = query.eq("warehouse", warehouse)
         
         if date:
@@ -88,11 +85,10 @@ def get_transactions(warehouse=None, date=None):
             return pd.DataFrame()
         return pd.DataFrame(res.data)
     except Exception as e:
-        st.error(f"خطأ في جلب التحركات: {str(e)}")
+        st.error(f"Error getting transactions: {str(e)}")
         return pd.DataFrame()
 
 def save_transaction(trans_type, item_name, brand, quantity, warehouse, destination=None):
-    """حفظ حركة في سجل التحركات"""
     try:
         data = {
             "type": str(trans_type),
@@ -106,11 +102,10 @@ def save_transaction(trans_type, item_name, brand, quantity, warehouse, destinat
         supabase.table("transactions").insert(data).execute()
         return True
     except Exception as e:
-        st.error(f"لم يتم حفظ السجل: {str(e)}")
+        st.error(f"Error saving transaction: {str(e)}")
         return False
 
 def send_telegram(msg):
-    """إرسال إشعار تيليجرام"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": CHAT_ID, "text": msg}, timeout=5)
@@ -118,11 +113,10 @@ def send_telegram(msg):
         pass
 
 # =========================
-# 3. بناء قائمة المخازن بشكل آمن
+# 3. Build warehouse list
 # =========================
 
 def build_warehouse_list():
-    """بناء قائمة المخازن بشكل آمن"""
     default_warehouses = ["مخزن البخاري", "مخزن الجديد"]
     db_warehouses = []
     
@@ -151,22 +145,22 @@ def build_warehouse_list():
     except:
         return default_warehouses
 
-# بناء قائمة المخازن
+# Build warehouse list
 try:
     wh_list = build_warehouse_list()
 except Exception as e:
-    st.error(f"خطأ في بناء قائمة المخازن: {str(e)}")
+    st.error(f"Error building warehouse list: {str(e)}")
     wh_list = ["مخزن البخاري", "مخزن الجديد"]
 
-# جلب البيانات للاستخدام
+# Get inventory data
 inv_df = get_data("inventory")
 
 # =========================
-# 4. واجهة المستخدم
+# 4. User Interface
 # =========================
 st.sidebar.title("🏢 مستودعات النذير")
 
-# إحصائيات سريعة
+# Quick stats
 if not inv_df.empty:
     st.sidebar.metric("📦 إجمالي الأصناف", len(inv_df))
     st.sidebar.metric("🏭 عدد المخازن", len(wh_list))
@@ -177,7 +171,7 @@ if not inv_df.empty:
     except:
         pass
 
-# التبويبات
+# Tabs
 tab1, tab2, tab3, tab4 = st.tabs([
     "📊 جرد المخازن", 
     "📥 توريد", 
@@ -185,7 +179,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📋 سجل التحركات والإدارة"
 ])
 
-# --- التبويب 1: الجرد ---
+# --- Tab 1: Inventory ---
 with tab1:
     st.header("📊 جرد المخازن")
     
@@ -231,7 +225,7 @@ with tab1:
     else:
         st.info("اختر مخزناً لعرض محتوياته")
 
-# --- التبويب 2: التوريد ---
+# --- Tab 2: Supply ---
 with tab2:
     st.header("📥 توريد بضاعة")
     
@@ -278,18 +272,18 @@ with tab2:
                             save_transaction("توريد", n.strip(), b.strip(), q, t_wh)
                             
                             note_text = f" | ملاحظات: {notes}" if notes else ""
-                            send_telegram(f"📥 توريد: {n} ({b})\nالكمية: {q}\nإلى: {t_wh}{note_text}")
+                            send_telegram(f"توريد: {n} ({b}) - الكمية: {q} - إلى: {t_wh}{note_text}")
                             
-                            st.success(f"✅ تم توريد {q} من {n} ({b}) إلى {t_wh}")
+                            st.success(f"تم توريد {q} من {n} ({b}) إلى {t_wh}")
                             st.cache_resource.clear()
                             st.rerun()
                             
                         except Exception as e:
-                            st.error(f"حدث خطأ أثناء الحفظ: {str(e)}")
+                            st.error(f"حدث خطأ: {str(e)}")
     else:
         st.warning("لا توجد مخازن متاحة")
 
-# --- التبويب 3: الصرف ---
+# --- Tab 3: Withdraw ---
 with tab3:
     st.header("📤 صرف بضاعة")
     
@@ -345,30 +339,28 @@ with tab3:
                                     
                                     reason_text = f" | السبب: {reason}" if reason else ""
                                     send_telegram(
-                                        f"📤 صرف: {row['name']} ({row['brand']})\n"
-                                        f"الكمية: {q_o}\n"
-                                        f"من: {source_wh}\n"
-                                        f"إلى: {dst}{reason_text}"
+                                        f"صرف: {row['name']} ({row['brand']}) - "
+                                        f"الكمية: {q_o} - من: {source_wh} - إلى: {dst}{reason_text}"
                                     )
                                     
-                                    st.success(f"✅ تم صرف {q_o} من {row['name']} إلى {dst}")
+                                    st.success(f"تم صرف {q_o} من {row['name']} إلى {dst}")
                                     st.cache_resource.clear()
                                     st.rerun()
                                     
                         except Exception as e:
-                            st.error(f"حدث خطأ أثناء الصرف: {str(e)}")
+                            st.error(f"حدث خطأ: {str(e)}")
         else:
-            st.warning(f"⚠️ المخزن {source_wh} فارغ أو لا يحتوي على بضائع متاحة")
+            st.warning(f"المخزن {source_wh} فارغ")
     else:
         st.info("قاعدة البيانات فارغة")
 
-# --- التبويب 4: سجل التحركات والإدارة ---
+# --- Tab 4: Transactions & Management ---
 with tab4:
     st.header("📋 سجل التحركات والإدارة")
     
     admin_tab1, admin_tab2 = st.tabs(["📊 سجل التحركات", "🗑️ حذف الأصناف"])
     
-    # ====== سجل التحركات ======
+    # Transactions log
     with admin_tab1:
         st.subheader("📊 سجل التحركات اليومية")
         
@@ -408,8 +400,8 @@ with tab4:
             if not transactions_df.empty:
                 if 'created_at' in transactions_df.columns:
                     transactions_df['created_at'] = pd.to_datetime(transactions_df['created_at'], errors='coerce')
-                    transactions_df['التاريخ'] = transactions_df['created_at'].dt.strftime('%Y-%m-%d')
-                    transactions_df['الوقت'] = transactions_df['created_at'].dt.strftime('%H:%M:%S')
+                    transactions_df['date'] = transactions_df['created_at'].dt.strftime('%Y-%m-%d')
+                    transactions_df['time'] = transactions_df['created_at'].dt.strftime('%H:%M:%S')
                 
                 display_df = transactions_df.rename(columns={
                     'type': 'النوع',
@@ -420,7 +412,7 @@ with tab4:
                     'destination': 'الجهة'
                 })
                 
-                display_columns = ['النوع', 'التاريخ', 'الوقت', 'الصنف', 'الماركة', 
+                display_columns = ['النوع', 'date', 'time', 'الصنف', 'الماركة', 
                                  'الكمية', 'المخزن', 'الجهة']
                 available_columns = [col for col in display_columns if col in display_df.columns]
                 
@@ -433,17 +425,17 @@ with tab4:
                 
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("📥 توريدات", len(transactions_df[transactions_df['type'] == 'توريد']))
+                    st.metric("توريدات", len(transactions_df[transactions_df['type'] == 'توريد']))
                 with col2:
-                    st.metric("📤 صرفيات", len(transactions_df[transactions_df['type'] == 'صرف']))
+                    st.metric("صرفيات", len(transactions_df[transactions_df['type'] == 'صرف']))
                 with col3:
-                    st.metric("🗑️ محذوفات", len(transactions_df[transactions_df['type'] == 'حذف']))
+                    st.metric("محذوفات", len(transactions_df[transactions_df['type'] == 'حذف']))
                 with col4:
-                    st.metric("📦 الإجمالي", len(transactions_df))
+                    st.metric("الإجمالي", len(transactions_df))
                 
                 csv = transactions_df.to_csv(index=False).encode('utf-8-sig')
                 st.download_button(
-                    label="📥 تحميل السجل (CSV)",
+                    label="تحميل السجل (CSV)",
                     data=csv,
                     file_name=f"سجل_التحركات_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                     mime="text/csv",
@@ -454,10 +446,10 @@ with tab4:
         else:
             st.info("لا توجد تحركات مسجلة بعد")
     
-    # ====== حذف الأصناف ======
+    # Delete items
     with admin_tab2:
         st.subheader("🗑️ حذف الأصناف")
-        st.warning("⚠️ تنبيه: الحذف نهائي ولا يمكن التراجع عنه!")
+        st.warning("تنبيه: الحذف نهائي!")
         
         if not inv_df.empty and wh_list:
             del_warehouse = st.selectbox(
@@ -484,7 +476,7 @@ with tab4:
                         key="delete_item"
                     )
                     
-                    if st.button("🗑️ حذف نهائي", type="primary", use_container_width=True):
+                    if st.button("حذف نهائي", type="primary", use_container_width=True):
                         try:
                             idx = delete_options.index(item_to_delete)
                             item = del_items.iloc[idx]
@@ -494,12 +486,12 @@ with tab4:
                             
                             supabase.table("inventory").delete().eq("id", item['id']).execute()
                             
-                            st.success(f"✅ تم حذف {item['name']} ({item['brand']}) بنجاح")
+                            st.success(f"تم حذف {item['name']} ({item['brand']})")
                             st.cache_resource.clear()
                             st.rerun()
                             
                         except Exception as e:
-                            st.error(f"حدث خطأ في الحذف: {str(e)}")
+                            st.error(f"حدث خطأ: {str(e)}")
                 else:
                     st.info("لا توجد خيارات متاحة للحذف")
             else:
@@ -508,11 +500,11 @@ with tab4:
             st.info("لا توجد أصناف للحذف")
 
 # =========================
-# 5. تذييل الصفحة
+# 5. Footer
 # =========================
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"🕐 آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+st.sidebar.markdown(f"اخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-if st.sidebar.button("🔄 تحديث البيانات", use_container_width=True):
+if st.sidebar.button("تحديث البيانات", use_container_width=True):
     st.cache_resource.clear()
     st.rerun()
