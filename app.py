@@ -12,8 +12,10 @@ import time as time_module
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 TELEGRAM_TOKEN = "8691308758:AAFNrLc7UAofgEGvYi-s9-qJB20mqA9n4XM"
-CHAT_ID = "5716145319"
-
+CHAT_IDS = [
+    "5716145319",  # الشخص الأول
+    "8703100900",  # الشخص الثاني - ضع الـ Chat ID الصحيح هنا
+]
 st.set_page_config(page_title="نظام النذير للمخازن", layout="wide")
 
 @st.cache_resource
