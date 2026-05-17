@@ -18,7 +18,7 @@ CHAT_IDS = [
     "8703100900",
 ]
 
-st.set_page_config(page_title="نظام النذير للمخازن", layout="wide")
+st.set_page_config(page_title="نظام  المخازن", layout="wide")
 
 @st.cache_resource
 def init_supabase():
@@ -190,7 +190,7 @@ if not wh_list:
 
 inv_df = get_data("inventory")
 
-st.sidebar.title("مستودعات النذير")
+st.sidebar.title("مستودعات ")
 
 if not inv_df.empty:
     st.sidebar.metric("إجمالي الأصناف", len(inv_df))
