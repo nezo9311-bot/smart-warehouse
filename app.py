@@ -232,7 +232,7 @@ if st.sidebar.button("📊 إرسال تقرير يومي الآن", use_contain
 
 tab1, tab2, tab3, tab4 = st.tabs(["جرد المخازن", "توريد", "صرف", "سجل التحركات والإدارة"])
 
-# --- التبويب 1: الجرد ---
+# --- التبويب 1: الجرد (RTL) ---
 with tab1:
     st.header("جرد المخازن")
     col1, col2 = st.columns([2, 1])
@@ -262,7 +262,7 @@ with tab1:
     else:
         st.info("اختر مخزناً لعرض محتوياته")
 
-# --- التبويب 2: التوريد ---
+# --- التبويب 2: التوريد (نافذة منبثقة للتأكيد) ---
 with tab2:
     st.header("توريد بضاعة")
     
@@ -339,7 +339,7 @@ with tab2:
         
         show_supply_dialog()
 
-# --- التبويب 3: الصرف ---
+# --- التبويب 3: الصرف (نافذة منبثقة للتأكيد) ---
 with tab3:
     st.header("صرف بضاعة")
     if not inv_df.empty:
@@ -425,7 +425,7 @@ with tab3:
     else:
         st.info("قاعدة البيانات فارغة")
 
-# --- التبويب 4: السجل والإدارة ---
+# --- التبويب 4: السجل والإدارة (RTL) ---
 with tab4:
     st.header("سجل التحركات والإدارة")
     admin_tab1, admin_tab2 = st.tabs(["سجل التحركات", "حذف الأصناف"])
@@ -449,6 +449,4 @@ with tab4:
             if not transactions_df.empty:
                 if 'created_at' in transactions_df.columns:
                     transactions_df['created_at'] = pd.to_datetime(transactions_df['created_at'], errors='coerce')
-                    transactions_df['التاريخ'] = transactions_df['created_at'].dt.strftime('%Y-%m-%d')
-                
-          
+                    transactions_df['التاريخ'] = transactions_df['create
