@@ -248,7 +248,6 @@ with tab1:
             brand_match = disp['brand'].astype(str).str.contains(search_term, case=False, na=False)
             disp = disp[name_match | brand_match]
         if not disp.empty:
-            # ترتيب الأعمدة من اليمين لليسار: الكمية، الماركة، الصنف
             st.dataframe(
                 disp[['quantity', 'brand', 'name']].rename(
                     columns={'quantity': 'الكمية', 'brand': 'الماركة', 'name': 'الصنف'}
@@ -263,7 +262,7 @@ with tab1:
     else:
         st.info("اختر مخزناً لعرض محتوياته")
 
-# --- التبويب 2: التوريد (مع التأكيد) ---
+# --- التبويب 2: التوريد (نافذة منبثقة للتأكيد) ---
 with tab2:
     st.header("توريد بضاعة")
     with st.form("supply_form", clear_on_submit=True):
@@ -276,45 +275,49 @@ with tab2:
             q = st.number_input("الكمية الموردة *", min_value=1, value=1, key="supply_qty")
             notes = st.text_area("ملاحظات (اختياري)", key="supply_notes")
         
-        if n and b and q > 0:
-            st.info(f"""
-            **تفاصيل التوريد:**
-            - الصنف: {n}
-            - الماركة: {b}
-            - المخزن: {t_wh}
-            - الكمية الموردة: {q}
-            """)
-            confirm = st.checkbox("أؤكد صحة البيانات وأريد إتمام التوريد", key="confirm_supply")
-        else:
-            confirm = False
-        
-        submitted = st.form_submit_button("حفظ التوريد", use_container_width=True)
+        submitted = st.form_submit_button("متابعة التوريد", use_container_width=True)
         
         if submitted:
             if not n or not b:
                 st.error("الرجاء إدخال اسم الصنف والماركة")
-            elif not confirm:
-                st.error("الرجاء تأكيد العملية بالضغط على مربع التأكيد")
             else:
-                existing = supabase.table("inventory").select("*").eq("name", n).eq("brand", b).eq("warehouse", t_wh).execute()
+                @st.dialog("تأكيد التوريد")
+                def confirm_supply():
+                    st.write(f"""
+                    **تفاصيل التوريد:**
+                    - الصنف: {n}
+                    - الماركة: {b}
+                    - المخزن: {t_wh}
+                    - الكمية الموردة: {q}
+                    """)
+                    if notes:
+                        st.write(f"- ملاحظات: {notes}")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("✅ تأكيد", use_container_width=True):
+                            existing = supabase.table("inventory").select("*").eq("name", n).eq("brand", b).eq("warehouse", t_wh).execute()
+                            if existing.data and len(existing.data) > 0:
+                                old_qty = int(existing.data[0]['quantity'])
+                                new_qty = old_qty + q
+                                supabase.table("inventory").update({"quantity": new_qty}).eq("id", existing.data[0]['id']).execute()
+                                save_transaction("توريد", n, b, q, t_wh)
+                                send_telegram_supply(n, b, q, t_wh, new_qty, notes)
+                                st.success(f"تم تحديث الكمية: {n} ({b}) - الكمية الجديدة: {new_qty}")
+                            else:
+                                supabase.table("inventory").insert({"name": n, "brand": b, "quantity": q, "warehouse": t_wh}).execute()
+                                save_transaction("توريد", n, b, q, t_wh)
+                                send_telegram_supply(n, b, q, t_wh, q, notes)
+                                st.success(f"تم إضافة صنف جديد: {n} ({b}) - الكمية: {q}")
+                            st.cache_resource.clear()
+                            st.rerun()
+                    with col2:
+                        if st.button("❌ إلغاء", use_container_width=True):
+                            st.rerun()
                 
-                if existing.data and len(existing.data) > 0:
-                    old_qty = int(existing.data[0]['quantity'])
-                    new_qty = old_qty + q
-                    supabase.table("inventory").update({"quantity": new_qty}).eq("id", existing.data[0]['id']).execute()
-                    save_transaction("توريد", n, b, q, t_wh)
-                    send_telegram_supply(n, b, q, t_wh, new_qty, notes)
-                    st.success(f"تم تحديث الكمية: {n} ({b}) - الكمية الجديدة: {new_qty}")
-                else:
-                    supabase.table("inventory").insert({"name": n, "brand": b, "quantity": q, "warehouse": t_wh}).execute()
-                    save_transaction("توريد", n, b, q, t_wh)
-                    send_telegram_supply(n, b, q, t_wh, q, notes)
-                    st.success(f"تم إضافة صنف جديد: {n} ({b}) - الكمية: {q}")
-                
-                st.cache_resource.clear()
-                st.rerun()
+                confirm_supply()
 
-# --- التبويب 3: الصرف (مع التأكيد) ---
+# --- التبويب 3: الصرف (نافذة منبثقة للتأكيد) ---
 with tab3:
     st.header("صرف بضاعة")
     if not inv_df.empty:
@@ -334,43 +337,44 @@ with tab3:
                 with col2:
                     dst = st.text_input("الجهة المستلمة *", key="withdraw_dest")
                 
-                confirm = False
-                if dst and q_o > 0 and sel_item_full:
-                    sel_idx = item_options.index(sel_item_full)
-                    row = items.iloc[sel_idx]
-                    if q_o <= int(row['quantity']):
-                        st.info(f"""
-                        **تفاصيل الصرف:**
-                        - الصنف والماركة: {row['name']} ({row['brand']})
-                        - المخزن: {source_wh}
-                        - الكمية المطلوبة: {q_o}
-                        - الجهة المستلمة: {dst}
-                        - الكمية المتبقية بعد الصرف: {int(row['quantity']) - q_o}
-                        """)
-                        confirm = st.checkbox("أؤكد صحة البيانات وأريد إتمام الصرف", key="confirm_withdraw")
-                    else:
-                        st.error(f"الكمية غير متوفرة! المتاح: {row['quantity']}")
-                
-                submitted = st.form_submit_button("تأكيد الصرف", use_container_width=True)
+                submitted = st.form_submit_button("متابعة الصرف", use_container_width=True)
                 
                 if submitted:
                     if not dst:
                         st.error("الرجاء إدخال الجهة المستلمة")
-                    elif not confirm:
-                        st.error("الرجاء تأكيد العملية بالضغط على مربع التأكيد")
-                    elif q_o > 0 and sel_item_full:
+                    elif q_o <= 0:
+                        st.error("الرجاء إدخال كمية صحيحة")
+                    else:
                         sel_idx = item_options.index(sel_item_full)
                         row = items.iloc[sel_idx]
                         if q_o > int(row['quantity']):
                             st.error(f"الكمية غير متوفرة! المتاح: {row['quantity']}")
                         else:
-                            new_qty = int(row['quantity']) - q_o
-                            supabase.table("inventory").update({"quantity": new_qty}).eq("id", row['id']).execute()
-                            save_transaction("صرف", str(row['name']), str(row['brand']), q_o, source_wh, dst.strip())
-                            send_telegram_withdraw(str(row['name']), str(row['brand']), q_o, source_wh, dst.strip(), new_qty)
-                            st.success(f"تم صرف {q_o} من {row['name']} إلى {dst}")
-                            st.cache_resource.clear()
-                            st.rerun()
+                            @st.dialog("تأكيد الصرف")
+                            def confirm_withdraw():
+                                st.write(f"""
+                                **تفاصيل الصرف:**
+                                - الصنف والماركة: {row['name']} ({row['brand']})
+                                - المخزن: {source_wh}
+                                - الكمية المطلوبة: {q_o}
+                                - الجهة المستلمة: {dst}
+                                - الكمية المتبقية بعد الصرف: {int(row['quantity']) - q_o}
+                                """)
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    if st.button("✅ تأكيد", use_container_width=True):
+                                        new_qty = int(row['quantity']) - q_o
+                                        supabase.table("inventory").update({"quantity": new_qty}).eq("id", row['id']).execute()
+                                        save_transaction("صرف", str(row['name']), str(row['brand']), q_o, source_wh, dst.strip())
+                                        send_telegram_withdraw(str(row['name']), str(row['brand']), q_o, source_wh, dst.strip(), new_qty)
+                                        st.success(f"تم صرف {q_o} من {row['name']} إلى {dst}")
+                                        st.cache_resource.clear()
+                                        st.rerun()
+                                with col2:
+                                    if st.button("❌ إلغاء", use_container_width=True):
+                                        st.rerun()
+                            
+                            confirm_withdraw()
         else:
             st.warning(f"المخزن {source_wh} فارغ")
     else:
@@ -402,10 +406,8 @@ with tab4:
                     transactions_df['created_at'] = pd.to_datetime(transactions_df['created_at'], errors='coerce')
                     transactions_df['التاريخ'] = transactions_df['created_at'].dt.strftime('%Y-%m-%d')
                 
-                # دمج الصنف والماركة
                 transactions_df['الصنف والماركة'] = transactions_df['item_name'] + " (" + transactions_df['brand'] + ")"
                 
-                # تنسيق الأعمدة
                 display_df = transactions_df.rename(columns={
                     'type': 'النوع',
                     'quantity': 'الكمية',
@@ -413,7 +415,6 @@ with tab4:
                     'warehouse': 'المخزن'
                 })
                 
-                # ترتيب الأعمدة من اليمين لليسار (RTL)
                 display_columns = ['النوع', 'الصنف والماركة', 'الكمية', 'الجهة المستلمة', 'التاريخ', 'المخزن']
                 available_columns = [col for col in display_columns if col in display_df.columns]
                 
@@ -440,11 +441,4 @@ with tab4:
             del_items = inv_df[inv_df['warehouse'] == del_warehouse]
             if not del_items.empty:
                 delete_options = []
-                for idx, row in del_items.iterrows():
-                    option = f"{row['name']} | {row['brand']} | الكمية: {row['quantity']}"
-                    delete_options.append(option)
                 
-                item_to_delete = st.selectbox("اختر الصنف للحذف", delete_options, key="delete_item")
-                if st.button("حذف نهائي", type="primary", use_container_width=True):
-                    idx = delete_options.index(item_to_delete)
-              
