@@ -80,9 +80,7 @@ def save_transaction(trans_type, item_name, brand, quantity, warehouse, destinat
     supabase.table("transactions").insert(data).execute()
     return True
 
-# رسائل تيليجرام المعدلة
 def send_telegram_supply(item_name, brand, quantity, warehouse, total_after, notes=""):
-    """إشعار توريد مع الكمية الإجمالية"""
     message = f"""📥 توريد جديد:
 📦 الصنف والماركة: {item_name} ({brand})
 🏢 المخزن: {warehouse}
@@ -99,7 +97,6 @@ def send_telegram_supply(item_name, brand, quantity, warehouse, total_after, not
             pass
 
 def send_telegram_withdraw(item_name, brand, quantity, warehouse, destination, remaining):
-    """إشعار صرف مع الكمية المتبقية"""
     message = f"""📤 صرف بضاعة:
 📦 الصنف والماركة: {item_name} ({brand})
 🏢 من مخزن: {warehouse}
@@ -235,7 +232,7 @@ if st.sidebar.button("📊 إرسال تقرير يومي الآن", use_contain
 
 tab1, tab2, tab3, tab4 = st.tabs(["جرد المخازن", "توريد", "صرف", "سجل التحركات والإدارة"])
 
-# --- التبويب 1: الجرد ---
+# --- التبويب 1: الجرد (RTL) ---
 with tab1:
     st.header("جرد المخازن")
     col1, col2 = st.columns([2, 1])
@@ -251,7 +248,14 @@ with tab1:
             brand_match = disp['brand'].astype(str).str.contains(search_term, case=False, na=False)
             disp = disp[name_match | brand_match]
         if not disp.empty:
-            st.dataframe(disp[['name', 'brand', 'quantity']].rename(columns={'name': 'الصنف', 'brand': 'الماركة', 'quantity': 'الكمية'}), use_container_width=True, hide_index=True)
+            # ترتيب الأعمدة من اليمين لليسار: الكمية، الماركة، الصنف
+            st.dataframe(
+                disp[['quantity', 'brand', 'name']].rename(
+                    columns={'quantity': 'الكمية', 'brand': 'الماركة', 'name': 'الصنف'}
+                ),
+                use_container_width=True,
+                hide_index=True
+            )
             total_qty = disp['quantity'].sum()
             st.info(f"إجمالي الكميات في {sel_wh}: {int(total_qty)}")
         else:
@@ -259,7 +263,7 @@ with tab1:
     else:
         st.info("اختر مخزناً لعرض محتوياته")
 
-# --- التبويب 2: التوريد ---
+# --- التبويب 2: التوريد (مع التأكيد) ---
 with tab2:
     st.header("توريد بضاعة")
     with st.form("supply_form", clear_on_submit=True):
@@ -272,7 +276,6 @@ with tab2:
             q = st.number_input("الكمية الموردة *", min_value=1, value=1, key="supply_qty")
             notes = st.text_area("ملاحظات (اختياري)", key="supply_notes")
         
-        # عرض ملخص التأكيد
         if n and b and q > 0:
             st.info(f"""
             **تفاصيل التوريد:**
@@ -311,7 +314,7 @@ with tab2:
                 st.cache_resource.clear()
                 st.rerun()
 
-# --- التبويب 3: الصرف ---
+# --- التبويب 3: الصرف (مع التأكيد) ---
 with tab3:
     st.header("صرف بضاعة")
     if not inv_df.empty:
@@ -331,7 +334,6 @@ with tab3:
                 with col2:
                     dst = st.text_input("الجهة المستلمة *", key="withdraw_dest")
                 
-                # عرض ملخص التأكيد
                 confirm = False
                 if dst and q_o > 0 and sel_item_full:
                     sel_idx = item_options.index(sel_item_full)
@@ -374,7 +376,7 @@ with tab3:
     else:
         st.info("قاعدة البيانات فارغة")
 
-# --- التبويب 4: سجل التحركات والإدارة ---
+# --- التبويب 4: السجل والإدارة (RTL) ---
 with tab4:
     st.header("سجل التحركات والإدارة")
     admin_tab1, admin_tab2 = st.tabs(["سجل التحركات", "حذف الأصناف"])
@@ -411,7 +413,7 @@ with tab4:
                     'warehouse': 'المخزن'
                 })
                 
-                # ترتيب الأعمدة من اليمين لليسار
+                # ترتيب الأعمدة من اليمين لليسار (RTL)
                 display_columns = ['النوع', 'الصنف والماركة', 'الكمية', 'الجهة المستلمة', 'التاريخ', 'المخزن']
                 available_columns = [col for col in display_columns if col in display_df.columns]
                 
@@ -445,5 +447,4 @@ with tab4:
                 item_to_delete = st.selectbox("اختر الصنف للحذف", delete_options, key="delete_item")
                 if st.button("حذف نهائي", type="primary", use_container_width=True):
                     idx = delete_options.index(item_to_delete)
-                    item = del_items.iloc[idx]
-     
+              
