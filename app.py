@@ -450,4 +450,64 @@ with tab4:
                 if 'created_at' in transactions_df.columns:
                     transactions_df['date'] = pd.to_datetime(transactions_df['created_at'], errors='coerce').dt.strftime('%Y-%m-%d')
                 
-                transactions_df['الصنف والماركة'] = t
+                transactions_df['الصنف والماركة'] = transactions_df['item_name'] + " (" + transactions_df['brand'] + ")"
+                
+                display_df = transactions_df.rename(columns={
+                    'type': 'النوع',
+                    'quantity': 'الكمية',
+                    'destination': 'الجهة المستلمة',
+                    'warehouse': 'المخزن',
+                    'date': 'التاريخ'
+                })
+                
+                display_columns = ['النوع', 'الصنف والماركة', 'الكمية', 'الجهة المستلمة', 'التاريخ', 'المخزن']
+                available_columns = [col for col in display_columns if col in display_df.columns]
+                
+                st.dataframe(display_df[available_columns], use_container_width=True, hide_index=True, height=400)
+                
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("توريدات", len(transactions_df[transactions_df['type'] == 'توريد']))
+                col2.metric("صرفيات", len(transactions_df[transactions_df['type'] == 'صرف']))
+                col3.metric("محذوفات", len(transactions_df[transactions_df['type'] == 'حذف']))
+                col4.metric("الإجمالي", len(transactions_df))
+                
+                csv = transactions_df.to_csv(index=False).encode('utf-8-sig')
+                st.download_button(label="تحميل السجل (CSV)", data=csv, file_name=f"transactions_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", mime="text/csv", use_container_width=True)
+            else:
+                st.info("لا توجد نتائج مطابقة للفلترة")
+        else:
+            st.info("لا توجد تحركات مسجلة بعد")
+    
+    with admin_tab2:
+        st.subheader("حذف الأصناف")
+        st.warning("تنبيه: الحذف نهائي!")
+        if not inv_df.empty:
+            del_warehouse = st.selectbox("اختر المخزن", wh_list, key="delete_warehouse")
+            del_items = inv_df[inv_df['warehouse'] == del_warehouse]
+            if not del_items.empty:
+                delete_options = []
+                for idx, row in del_items.iterrows():
+                    option = f"{row['name']} | {row['brand']} | الكمية: {row['quantity']}"
+                    delete_options.append(option)
+                
+                item_to_delete = st.selectbox("اختر الصنف للحذف", delete_options, key="delete_item")
+                if st.button("حذف نهائي", type="primary", use_container_width=True):
+                    idx = delete_options.index(item_to_delete)
+                    item = del_items.iloc[idx]
+                    save_transaction("حذف", str(item['name']), str(item['brand']), int(item['quantity']), del_warehouse, "حذف من النظام")
+                    send_telegram_delete(str(item['name']), str(item['brand']), int(item['quantity']), del_warehouse)
+                    supabase.table("inventory").delete().eq("id", item['id']).execute()
+                    st.success(f"تم حذف {item['name']} ({item['brand']})")
+                    st.cache_resource.clear()
+                    st.rerun()
+            else:
+                st.info(f"المخزن {del_warehouse} فارغ")
+        else:
+            st.info("لا توجد أصناف للحذف")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown(f"اخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+if st.sidebar.button("تحديث البيانات", use_container_width=True):
+    st.cache_resource.clear()
+    st.rerun()
