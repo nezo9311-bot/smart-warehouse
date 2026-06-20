@@ -124,43 +124,67 @@ def send_daily_report():
     khartoum_tz = pytz.timezone('Africa/Khartoum')
     now = datetime.now(khartoum_tz)
     today = now.strftime('%Y-%m-%d')
-    yesterday = (now - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
     
     today_transactions = get_transactions(date=today)
-    yesterday_transactions = get_transactions(date=yesterday)
+    inv_df = get_data("inventory")
     
     supply_count = len(today_transactions[today_transactions['type'] == 'توريد']) if not today_transactions.empty else 0
     withdraw_count = len(today_transactions[today_transactions['type'] == 'صرف']) if not today_transactions.empty else 0
     delete_count = len(today_transactions[today_transactions['type'] == 'حذف']) if not today_transactions.empty else 0
-    
     supply_qty = today_transactions[today_transactions['type'] == 'توريد']['quantity'].sum() if not today_transactions.empty else 0
     withdraw_qty = today_transactions[today_transactions['type'] == 'صرف']['quantity'].sum() if not today_transactions.empty else 0
     
-    yesterday_supply = len(yesterday_transactions[yesterday_transactions['type'] == 'توريد']) if not yesterday_transactions.empty else 0
-    yesterday_withdraw = len(yesterday_transactions[yesterday_transactions['type'] == 'صرف']) if not yesterday_transactions.empty else 0
-    
-    inv_df = get_data("inventory")
     total_items = len(inv_df) if not inv_df.empty else 0
     total_quantity = inv_df['quantity'].sum() if not inv_df.empty else 0
     
-    message = f"📊 التقرير اليومي - {today}\n\n"
-    message += f"📥 التوريدات:\n🔹 عدد العمليات: {supply_count}\n🔹 الكمية الإجمالية: {int(supply_qty)}\n\n"
-    message += f"📤 الصرفيات:\n🔹 عدد العمليات: {withdraw_count}\n🔹 الكمية الإجمالية: {int(withdraw_qty)}\n\n"
-    message += f"🗑️ المحذوفات: {delete_count}\n\n"
-    message += f"📦 المخزون الحالي:\n🔹 عدد الأصناف: {total_items}\n🔹 الكمية الإجمالية: {int(total_quantity)}\n\n"
-    message += f"📊 مقارنة مع أمس:\n🔹 توريدات أمس: {yesterday_supply}\n🔹 صرفيات أمس: {yesterday_withdraw}"
-
-    if supply_count > 0:
-        message += "\n📋 تفاصيل التوريدات:"
-        supplies = today_transactions[today_transactions['type'] == 'توريد']
-        for _, row in supplies.iterrows():
-            message += f"\n• {row['item_name']} ({row['brand']}) - {int(row['quantity'])} - {row['warehouse']}"
+    message = f"📊 التقرير اليومي - {today}\n"
+    message += "━━━━━━━━━━━━━━━━━━\n"
+    message += f"📥 إجمالي التوريدات: {supply_count} عملية (+{int(supply_qty)})\n"
+    message += f"📤 إجمالي الصرفيات: {withdraw_count} عملية (-{int(withdraw_qty)})\n"
+    if delete_count > 0:
+        message += f"🗑️ المحذوفات: {delete_count}\n"
+    message += f"📦 إجمالي المخزون: {total_items} صنف ({int(total_quantity)} قطعة)\n"
     
-    if withdraw_count > 0:
-        message += "\n\n📋 تفاصيل الصرفيات:"
-        withdraws = today_transactions[today_transactions['type'] == 'صرف']
-        for _, row in withdraws.iterrows():
-            message += f"\n• {row['item_name']} ({row['brand']}) - {int(row['quantity'])} - إلى: {row.get('destination', 'غير محدد')}"
+    warehouses = wh_list if wh_list else []
+    if not today_transactions.empty or not inv_df.empty:
+        message += "\n📋 تفاصيل المخازن:"
+        for wh in warehouses:
+            wh_today = today_transactions[today_transactions['warehouse'] == wh] if not today_transactions.empty else pd.DataFrame()
+            wh_supply_count = len(wh_today[wh_today['type'] == 'توريد']) if not wh_today.empty else 0
+            wh_withdraw_count = len(wh_today[wh_today['type'] == 'صرف']) if not wh_today.empty else 0
+            wh_delete_count = len(wh_today[wh_today['type'] == 'حذف']) if not wh_today.empty else 0
+            wh_supply_qty = wh_today[wh_today['type'] == 'توريد']['quantity'].sum() if not wh_today.empty else 0
+            wh_withdraw_qty = wh_today[wh_today['type'] == 'صرف']['quantity'].sum() if not wh_today.empty else 0
+            
+            wh_inv = inv_df[inv_df['warehouse'] == wh] if not inv_df.empty else pd.DataFrame()
+            wh_items_count = len(wh_inv) if not wh_inv.empty else 0
+            wh_qty_total = wh_inv['quantity'].sum() if not wh_inv.empty else 0
+            
+            message += f"\n\n🏢 {wh}:"
+            if wh_supply_count > 0 or wh_withdraw_count > 0 or wh_delete_count > 0:
+                if wh_supply_count > 0:
+                    message += f"\n   📥 توريد: {wh_supply_count} عمليات (+{int(wh_supply_qty)})"
+                if wh_withdraw_count > 0:
+                    message += f"\n   📤 صرف: {wh_withdraw_count} عمليات (-{int(wh_withdraw_qty)})"
+                if wh_delete_count > 0:
+                    message += f"\n   🗑️ حذف: {wh_delete_count}"
+            else:
+                message += "\n   لا توجد حركات اليوم"
+            message += f"\n   📦 المخزون الحالي: {wh_items_count} صنف ({int(wh_qty_total)} قطعة)"
+            
+            if not wh_today.empty:
+                supplies = wh_today[wh_today['type'] == 'توريد']
+                if not supplies.empty:
+                    message += "\n   🔹 التوريدات:"
+                    for _, row in supplies.iterrows():
+                        message += f"\n      • {row['item_name']} ({row['brand']}): +{int(row['quantity'])}"
+                
+                withdraws = wh_today[wh_today['type'] == 'صرف']
+                if not withdraws.empty:
+                    message += "\n   🔸 الصرفيات:"
+                    for _, row in withdraws.iterrows():
+                        destination = row.get('destination', 'غير محدد')
+                        message += f"\n      • {row['item_name']} ({row['brand']}): -{int(row['quantity'])} → {destination}"
     
     for chat_id in CHAT_IDS:
         try:
@@ -232,7 +256,7 @@ if st.sidebar.button("📊 إرسال تقرير يومي الآن", use_contain
 
 tab1, tab2, tab3, tab4 = st.tabs(["جرد المخازن", "توريد", "صرف", "سجل التحركات والإدارة"])
 
-# --- التبويب 1: الجرد (RTL) ---
+# --- التبويب 1: الجرد ---
 with tab1:
     st.header("جرد المخازن")
     col1, col2 = st.columns([2, 1])
@@ -249,8 +273,8 @@ with tab1:
             disp = disp[name_match | brand_match]
         if not disp.empty:
             st.dataframe(
-                disp[['quantity', 'brand', 'name']].rename(
-                    columns={'quantity': 'الكمية', 'brand': 'الماركة', 'name': 'الصنف'}
+                disp[['name', 'brand', 'quantity']].rename(
+                    columns={'name': 'الصنف', 'brand': 'الماركة', 'quantity': 'الكمية'}
                 ),
                 use_container_width=True,
                 hide_index=True
@@ -262,7 +286,7 @@ with tab1:
     else:
         st.info("اختر مخزناً لعرض محتوياته")
 
-# --- التبويب 2: التوريد (نافذة منبثقة) ---
+# --- التبويب 2: التوريد ---
 with tab2:
     st.header("توريد بضاعة")
     
@@ -339,7 +363,7 @@ with tab2:
         
         show_supply_dialog()
 
-# --- التبويب 3: الصرف (نافذة منبثقة) ---
+# --- التبويب 3: الصرف ---
 with tab3:
     st.header("صرف بضاعة")
     if not inv_df.empty:
@@ -423,31 +447,4 @@ with tab3:
         else:
             st.warning(f"المخزن {source_wh} فارغ")
     else:
-        st.info("قاعدة البيانات فارغة")
-
-# --- التبويب 4: السجل والإدارة (RTL) ---
-with tab4:
-    st.header("سجل التحركات والإدارة")
-    admin_tab1, admin_tab2 = st.tabs(["سجل التحركات", "حذف الأصناف"])
-    
-    with admin_tab1:
-        st.subheader("سجل التحركات اليومية")
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col1:
-            filter_options = ["الكل"] + wh_list
-            filter_warehouse = st.selectbox("تصفية حسب المخزن", filter_options, key="log_warehouse")
-        with col2:
-            filter_date = st.date_input("تصفية حسب التاريخ", value=None, key="log_date")
-        with col3:
-            filter_type = st.selectbox("نوع الحركة", ["الكل", "توريد", "صرف", "حذف"], key="log_type")
-        
-        transactions_df = get_transactions(warehouse=None if filter_warehouse == "الكل" else filter_warehouse, date=filter_date.isoformat() if filter_date else None)
-        
-        if not transactions_df.empty:
-            if filter_type != "الكل":
-                transactions_df = transactions_df[transactions_df['type'] == filter_type]
-            if not transactions_df.empty:
-                if 'created_at' in transactions_df.columns:
-                    transactions_df['date'] = pd.to_datetime(transactions_df['created_at'], errors='coerce').dt.strftime('%Y-%m-%d')
-                
-                transactions_df['الصنف والماركة'] = t
+   
